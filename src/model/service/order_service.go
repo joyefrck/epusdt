@@ -110,8 +110,43 @@ func buildCreateTransactionResponse(order *mdb.Orders) *response.CreateTransacti
 	}
 }
 
+func configuredPaymentValue(key, requestValue string) string {
+	if value, ok := data.LookupSettingString(key); ok {
+		return strings.TrimSpace(value)
+	}
+	return strings.TrimSpace(requestValue)
+}
+
+func epayAssetType(token, network string) string {
+	token = strings.ToLower(strings.TrimSpace(token))
+	network = strings.ToLower(strings.TrimSpace(network))
+	if token == "" || network == "" {
+		return ""
+	}
+	return token + "." + network
+}
+
+// ApplyConfiguredPaymentDefaults forces initial orders to use the persisted
+// global payment defaults. Request asset fields are authenticated by the
+// signature middleware but do not select the initial payment target.
+func ApplyConfiguredPaymentDefaults(req *request.CreateTransactionRequest) {
+	if req == nil {
+		return
+	}
+	req.Token = configuredPaymentValue(mdb.SettingKeyEpayDefaultToken, req.Token)
+	req.Network = configuredPaymentValue(mdb.SettingKeyEpayDefaultNetwork, req.Network)
+	req.Currency = configuredPaymentValue(mdb.SettingKeyEpayDefaultCurrency, req.Currency)
+	if req.Currency == "" {
+		req.Currency = "cny"
+	}
+	if strings.EqualFold(req.PaymentType, mdb.PaymentTypeEpay) {
+		req.EpayType = epayAssetType(req.Token, req.Network)
+	}
+}
+
 // CreateTransaction creates a new payment order.
 func CreateTransaction(req *request.CreateTransactionRequest, apiKey *mdb.ApiKey) (*response.CreateTransactionResponse, error) {
+	ApplyConfiguredPaymentDefaults(req)
 	token := strings.ToUpper(strings.TrimSpace(req.Token))
 	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
 	network := strings.ToLower(strings.TrimSpace(req.Network))
@@ -560,11 +595,9 @@ func hasTransactionLock(order *mdb.Orders) bool {
 		order.ActualAmount > 0
 }
 
-const MaxSubOrders = 1
-
 // SwitchNetwork completes a status=4 placeholder in place, or creates/returns
-// an existing sub-order for a different payment target once the parent is
-// already concrete.
+// an existing sub-order for a different payment target once the root order is
+// already concrete. Both root and child trade IDs are accepted as input.
 func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounterResponse, error) {
 	gCreateTransactionLock.Lock()
 	defer gCreateTransactionLock.Unlock()
@@ -572,16 +605,24 @@ func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounter
 	token := strings.ToUpper(strings.TrimSpace(req.Token))
 	network := strings.ToLower(strings.TrimSpace(req.Network))
 
-	// 1. Load parent order
-	parent, err := data.GetOrderInfoByTradeId(req.TradeId)
+	// 1. Resolve the requested order back to its root order so a checkout can
+	// switch repeatedly even after the browser has navigated to a child order.
+	requestedOrder, err := data.GetOrderInfoByTradeId(req.TradeId)
 	if err != nil {
 		return nil, err
 	}
-	if parent.ID <= 0 {
+	if requestedOrder.ID <= 0 {
 		return nil, constant.OrderNotExists
 	}
-	if parent.ParentTradeId != "" {
-		return nil, constant.CannotSwitchSubOrder
+	parent := requestedOrder
+	if requestedOrder.ParentTradeId != "" {
+		parent, err = data.GetOrderInfoByTradeId(requestedOrder.ParentTradeId)
+		if err != nil {
+			return nil, err
+		}
+		if parent.ID <= 0 {
+			return nil, constant.OrderNotExists
+		}
 	}
 	if parent.Status != mdb.StatusWaitPay && parent.Status != mdb.StatusWaitSelect {
 		return nil, constant.OrderNotWaitPay
@@ -615,17 +656,7 @@ func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounter
 		return buildCheckoutResponse(existing), nil
 	}
 
-	// 4. Only one sub-order may ever be created under a parent. Existing
-	// active sub-orders are reused above; any other target after that is blocked.
-	count, err := data.CountSubOrders(parent.TradeId)
-	if err != nil {
-		return nil, err
-	}
-	if count >= MaxSubOrders {
-		return nil, constant.SubOrderLimitExceeded
-	}
-
-	// 5. Validate the target chain and asset before any rate lookup so
+	// 4. Validate the target chain and asset before any rate lookup so
 	// disabled/unknown tokens return the stable unsupported-asset error.
 	if !data.IsChainEnabled(network) {
 		return nil, constant.ChainNotEnabled
@@ -634,7 +665,7 @@ func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounter
 		return nil, err
 	}
 
-	// 6. Calculate amount for the new network
+	// 5. Calculate amount for the new network
 	rate := config.GetRateForCoin(strings.ToLower(token), strings.ToLower(parent.Currency))
 	if rate <= 0 {
 		return nil, constant.RateAmountErr
@@ -645,7 +676,7 @@ func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounter
 		return nil, constant.PayAmountErr
 	}
 
-	// 7. Find and lock wallet
+	// 6. Find and lock wallet
 	walletAddress, err := data.GetAvailableWalletAddressByNetwork(network)
 	if err != nil {
 		return nil, err
@@ -664,7 +695,7 @@ func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounter
 		return nil, constant.NotAvailableAmountErr
 	}
 
-	// 8. Create sub-order
+	// 7. Create sub-order
 	tx := dao.Mdb.Begin()
 	subOrder := &mdb.Orders{
 		TradeId:         subTradeID,
@@ -681,7 +712,7 @@ func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounter
 		NotifyUrl:       "",
 		RedirectUrl:     parent.RedirectUrl,
 		Name:            parent.Name,
-		EpayType:        parent.EpayType,
+		EpayType:        switchedEPayType(parent, token, network),
 		CallBackConfirm: mdb.CallBackConfirmOk, // don't trigger callback on sub-order
 		PaymentType:     parent.PaymentType,
 		PayProvider:     mdb.PaymentProviderOnChain,
@@ -740,7 +771,7 @@ func completeWaitSelectOrder(parent *mdb.Orders, token string, network string) (
 		return nil, constant.NotAvailableAmountErr
 	}
 
-	updated, err := data.CompleteWaitSelectOrder(parent.TradeId, network, token, availableAddress, availableAmount)
+	updated, err := data.CompleteWaitSelectOrder(parent.TradeId, network, token, availableAddress, availableAmount, switchedEPayType(parent, token, network))
 	if err != nil {
 		_ = data.UnLockTransactionByTradeId(parent.TradeId)
 		return nil, err
@@ -764,6 +795,7 @@ func buildCheckoutResponse(order *mdb.Orders) *response.CheckoutCounterResponse 
 	}
 	return &response.CheckoutCounterResponse{
 		TradeId:        order.TradeId,
+		ParentTradeId:  order.ParentTradeId,
 		Amount:         order.Amount,
 		ActualAmount:   order.ActualAmount,
 		Token:          order.Token,
@@ -778,6 +810,13 @@ func buildCheckoutResponse(order *mdb.Orders) *response.CheckoutCounterResponse 
 		ServerTime:     carbon.Now().TimestampMilli(),
 		IsSelected:     order.IsSelected,
 	}
+}
+
+func switchedEPayType(order *mdb.Orders, token string, network string) string {
+	if !isEPayOrder(order) {
+		return order.EpayType
+	}
+	return epayAssetType(token, network)
 }
 
 func completeWaitSelectOkPayOrder(parent *mdb.Orders, token string) (*response.CheckoutCounterResponse, error) {
@@ -832,7 +871,7 @@ func completeWaitSelectOkPayOrder(parent *mdb.Orders, token string) (*response.C
 		_ = data.MarkProviderOrderFailed(parent.TradeId, mdb.PaymentProviderOkPay)
 		return nil, err
 	}
-	updated, err := data.CompleteWaitSelectOkPayOrderWithTransaction(finalizeTx, parent.TradeId, token, amount)
+	updated, err := data.CompleteWaitSelectOkPayOrderWithTransaction(finalizeTx, parent.TradeId, token, amount, switchedEPayType(parent, token, mdb.PaymentProviderOkPay))
 	if err != nil {
 		finalizeTx.Rollback()
 		_ = data.MarkProviderOrderFailed(parent.TradeId, mdb.PaymentProviderOkPay)
@@ -918,14 +957,6 @@ func switchToOkPay(parent *mdb.Orders, token string) (*response.CheckoutCounterR
 		return resp, nil
 	}
 
-	count, err := data.CountSubOrders(parent.TradeId)
-	if err != nil {
-		return nil, err
-	}
-	if count >= MaxSubOrders {
-		return nil, constant.SubOrderLimitExceeded
-	}
-
 	rate := config.GetRateForCoin(strings.ToLower(token), strings.ToLower(parent.Currency))
 	if rate <= 0 {
 		return nil, constant.RateAmountErr
@@ -962,7 +993,7 @@ func switchToOkPay(parent *mdb.Orders, token string) (*response.CheckoutCounterR
 		NotifyUrl:       "",
 		RedirectUrl:     parent.RedirectUrl,
 		Name:            parent.Name,
-		EpayType:        parent.EpayType,
+		EpayType:        switchedEPayType(parent, token, mdb.PaymentProviderOkPay),
 		CallBackConfirm: mdb.CallBackConfirmOk,
 		PaymentType:     parent.PaymentType,
 		PayProvider:     mdb.PaymentProviderOkPay,

@@ -80,6 +80,21 @@ func GetSettingString(key, fallback string) string {
 	return v
 }
 
+// LookupSettingString returns the stored string and whether the key exists.
+// Unlike GetSettingString, an explicitly stored empty value is not replaced by
+// a fallback. Read the row directly because payment order creation must also
+// observe settings written outside this process immediately.
+func LookupSettingString(key string) (string, bool) {
+	if dao.Mdb == nil {
+		return "", false
+	}
+	var row mdb.Setting
+	if err := dao.Mdb.Where("`key` = ?", key).Take(&row).Error; err != nil {
+		return "", false
+	}
+	return row.Value, true
+}
+
 // GetSettingInt returns the int value for key, or fallback on miss/parse fail.
 func GetSettingInt(key string, fallback int) int {
 	v := GetSettingString(key, "")

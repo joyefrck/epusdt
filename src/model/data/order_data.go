@@ -301,14 +301,18 @@ func MarkParentOrderSuccessWithStatusesWithTransaction(tx *gorm.DB, parentTradeI
 	if len(allowedStatuses) == 0 {
 		return false, nil
 	}
+	updates := map[string]interface{}{
+		"status":           mdb.StatusPaySuccess,
+		"callback_confirm": mdb.CallBackConfirmNo,
+		"pay_by_sub_id":    sub.ID,
+	}
+	if strings.EqualFold(sub.PaymentType, mdb.PaymentTypeEpay) {
+		updates["epay_type"] = strings.ToLower(strings.TrimSpace(sub.Token)) + "." + strings.ToLower(strings.TrimSpace(sub.Network))
+	}
 	result := tx.Model(&mdb.Orders{}).
 		Where("trade_id = ?", parentTradeId).
 		Where("status IN ?", allowedStatuses).
-		Updates(map[string]interface{}{
-			"status":           mdb.StatusPaySuccess,
-			"callback_confirm": mdb.CallBackConfirmNo,
-			"pay_by_sub_id":    sub.ID,
-		})
+		Updates(updates)
 	return result.RowsAffected > 0, result.Error
 }
 
@@ -332,7 +336,7 @@ func MarkOrderSelected(tradeId string) error {
 // CompleteWaitSelectOrder fills a placeholder order with concrete chain fields
 // and makes it payable. It only updates status=WaitSelect rows so concurrent
 // switch-network attempts cannot overwrite a payable order.
-func CompleteWaitSelectOrder(tradeID string, network string, token string, receiveAddress string, actualAmount float64) (bool, error) {
+func CompleteWaitSelectOrder(tradeID string, network string, token string, receiveAddress string, actualAmount float64, epayType string) (bool, error) {
 	result := dao.Mdb.Model(&mdb.Orders{}).
 		Where("trade_id = ?", tradeID).
 		Where("status = ?", mdb.StatusWaitSelect).
@@ -342,6 +346,7 @@ func CompleteWaitSelectOrder(tradeID string, network string, token string, recei
 			"token":           strings.ToUpper(strings.TrimSpace(token)),
 			"receive_address": receiveAddress,
 			"actual_amount":   actualAmount,
+			"epay_type":       strings.TrimSpace(epayType),
 			"is_selected":     false,
 			"created_at":      time.Now(),
 		})
@@ -351,7 +356,7 @@ func CompleteWaitSelectOrder(tradeID string, network string, token string, recei
 // CompleteWaitSelectOkPayOrderWithTransaction converts a placeholder parent
 // directly into an OkPay order. It intentionally does not create a local chain
 // lock because OkPay owns the hosted payment target.
-func CompleteWaitSelectOkPayOrderWithTransaction(tx *gorm.DB, tradeID string, token string, actualAmount float64) (bool, error) {
+func CompleteWaitSelectOkPayOrderWithTransaction(tx *gorm.DB, tradeID string, token string, actualAmount float64, epayType string) (bool, error) {
 	result := tx.Model(&mdb.Orders{}).
 		Where("trade_id = ?", tradeID).
 		Where("status = ?", mdb.StatusWaitSelect).
@@ -361,6 +366,7 @@ func CompleteWaitSelectOkPayOrderWithTransaction(tx *gorm.DB, tradeID string, to
 			"token":           strings.ToUpper(strings.TrimSpace(token)),
 			"receive_address": "OKPAY",
 			"actual_amount":   actualAmount,
+			"epay_type":       strings.TrimSpace(epayType),
 			"is_selected":     false,
 			"pay_provider":    mdb.PaymentProviderOkPay,
 			"created_at":      time.Now(),

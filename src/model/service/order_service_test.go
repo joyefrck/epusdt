@@ -34,6 +34,22 @@ func newCreateTransactionRequest(orderID string, amount float64) *request.Create
 	}
 }
 
+func setConfiguredPaymentDefaults(t *testing.T, token, network, currency string) {
+	t.Helper()
+	for _, item := range []struct {
+		key   string
+		value string
+	}{
+		{mdb.SettingKeyEpayDefaultToken, token},
+		{mdb.SettingKeyEpayDefaultNetwork, network},
+		{mdb.SettingKeyEpayDefaultCurrency, currency},
+	} {
+		if err := data.SetSetting(mdb.SettingGroupEpay, item.key, item.value, mdb.SettingTypeString); err != nil {
+			t.Fatalf("set %s: %v", item.key, err)
+		}
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -143,6 +159,57 @@ func TestCreateTransactionRejectsPartialTokenNetwork(t *testing.T) {
 	req.Network = ""
 	if _, err := CreateTransaction(req, nil); err != constant.ParamsMarshalErr {
 		t.Fatalf("missing network error = %v, want %v", err, constant.ParamsMarshalErr)
+	}
+}
+
+func TestCreateTransactionForcesConfiguredPaymentDefaults(t *testing.T) {
+	cleanup := testutil.SetupTestDatabases(t)
+	defer cleanup()
+
+	setConfiguredPaymentDefaults(t, "usdt", mdb.NetworkEthereum, "cny")
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455668"); err != nil {
+		t.Fatalf("add ethereum wallet: %v", err)
+	}
+
+	req := newCreateTransactionRequest("order_forced_defaults_1", 10)
+	req.Token = "USDT"
+	req.Network = mdb.NetworkTron
+	req.Currency = "USD"
+	resp, err := CreateTransaction(req, nil)
+	if err != nil {
+		t.Fatalf("create transaction: %v", err)
+	}
+	order, err := data.GetOrderInfoByTradeId(resp.TradeId)
+	if err != nil {
+		t.Fatalf("reload order: %v", err)
+	}
+	if order.Token != "USDT" || order.Network != mdb.NetworkEthereum || order.Currency != "CNY" {
+		t.Fatalf("order token/network/currency = %q/%q/%q, want USDT/ethereum/CNY", order.Token, order.Network, order.Currency)
+	}
+}
+
+func TestCreateTransactionUsesPlaceholderWhenConfiguredDefaultsEmpty(t *testing.T) {
+	cleanup := testutil.SetupTestDatabases(t)
+	defer cleanup()
+
+	setConfiguredPaymentDefaults(t, "", "", "cny")
+	req := newCreateTransactionRequest("order_forced_defaults_empty_1", 10)
+	resp, err := CreateTransaction(req, nil)
+	if err != nil {
+		t.Fatalf("create placeholder: %v", err)
+	}
+	if resp.Status != mdb.StatusWaitSelect || resp.Token != "" {
+		t.Fatalf("response status/token = %d/%q, want %d/empty", resp.Status, resp.Token, mdb.StatusWaitSelect)
+	}
+}
+
+func TestCreateTransactionRejectsPartialConfiguredDefaults(t *testing.T) {
+	cleanup := testutil.SetupTestDatabases(t)
+	defer cleanup()
+
+	setConfiguredPaymentDefaults(t, "usdt", "", "cny")
+	if _, err := CreateTransaction(newCreateTransactionRequest("order_forced_defaults_partial_1", 10), nil); err != constant.ParamsMarshalErr {
+		t.Fatalf("partial defaults error = %v, want %v", err, constant.ParamsMarshalErr)
 	}
 }
 
@@ -739,6 +806,9 @@ func TestSwitchNetworkAfterWaitSelectCompletionUsesExistingSubOrderFlow(t *testi
 	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455668"); err != nil {
 		t.Fatalf("add ethereum wallet: %v", err)
 	}
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkBsc, "0xB1B2c3D4e5F60718293aBcDeF001122334455668"); err != nil {
+		t.Fatalf("add bsc wallet: %v", err)
+	}
 
 	req := newCreateTransactionRequest("order_wait_select_reswitch_1", 10)
 	req.Token = ""
@@ -770,6 +840,9 @@ func TestSwitchNetworkAfterWaitSelectCompletionUsesExistingSubOrderFlow(t *testi
 	if second.Network != mdb.NetworkEthereum || second.Token != "USDT" {
 		t.Fatalf("second switch token/network = %s/%s", second.Token, second.Network)
 	}
+	if second.ParentTradeId != parentResp.TradeId {
+		t.Fatalf("second switch parent_trade_id = %q, want %q", second.ParentTradeId, parentResp.TradeId)
+	}
 	count, err := data.CountActiveSubOrders(parentResp.TradeId)
 	if err != nil {
 		t.Fatalf("count active sub orders: %v", err)
@@ -778,13 +851,23 @@ func TestSwitchNetworkAfterWaitSelectCompletionUsesExistingSubOrderFlow(t *testi
 		t.Fatalf("active sub-order count = %d, want 1", count)
 	}
 
-	_, err = SwitchNetwork(&request.SwitchNetworkRequest{
-		TradeId: parentResp.TradeId,
+	third, err := SwitchNetwork(&request.SwitchNetworkRequest{
+		TradeId: second.TradeId,
 		Token:   "USDT",
 		Network: mdb.NetworkBsc,
 	})
-	if err != constant.SubOrderLimitExceeded {
-		t.Fatalf("third switch error = %v, want %v", err, constant.SubOrderLimitExceeded)
+	if err != nil {
+		t.Fatalf("third switch from child trade id: %v", err)
+	}
+	if third.Network != mdb.NetworkBsc || third.ParentTradeId != parentResp.TradeId {
+		t.Fatalf("third switch network/parent_trade_id = %q/%q", third.Network, third.ParentTradeId)
+	}
+	count, err = data.CountActiveSubOrders(parentResp.TradeId)
+	if err != nil {
+		t.Fatalf("count active sub orders after third switch: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("active sub-order count after third switch = %d, want 2", count)
 	}
 }
 
@@ -1371,6 +1454,8 @@ func TestOrderProcessingSubOrderPaidParentKeepsOwnFields(t *testing.T) {
 
 	parentReq := newCreateTransactionRequest("order_sub_pay_test", 1)
 	parentReq.Network = mdb.NetworkTron
+	parentReq.PaymentType = mdb.PaymentTypeEpay
+	parentReq.EpayType = "usdt.tron"
 	parentResp, err := CreateTransaction(parentReq, nil)
 	if err != nil {
 		t.Fatalf("create parent order: %v", err)
@@ -1446,6 +1531,9 @@ func TestOrderProcessingSubOrderPaidParentKeepsOwnFields(t *testing.T) {
 	}
 	if parent.CallBackConfirm != mdb.CallBackConfirmNo {
 		t.Fatalf("parent callback_confirm = %d, want %d (callback must be queued)", parent.CallBackConfirm, mdb.CallBackConfirmNo)
+	}
+	if parent.EpayType != "usdt.ethereum" {
+		t.Fatalf("parent epay_type = %q, want paid child type usdt.ethereum", parent.EpayType)
 	}
 }
 

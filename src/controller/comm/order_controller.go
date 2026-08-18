@@ -54,6 +54,7 @@ func (c *BaseCommController) CreateTransaction(ctx echo.Context) (err error) {
 	if err = ctx.Bind(req); err != nil {
 		return c.FailJson(ctx, constant.ParamsMarshalErr)
 	}
+	service.ApplyConfiguredPaymentDefaults(req)
 	if err = c.ValidateStruct(ctx, req); err != nil {
 		return c.FailJson(ctx, err)
 	}
@@ -106,9 +107,8 @@ func (c *BaseCommController) SwitchNetwork(ctx echo.Context) (err error) {
 // the canonical form — the GET variant is identical save the transport.
 // @Summary      Create transaction and redirect (EPAY compat)
 // @Description  Legacy EPAY-style endpoint. Accepts GET (querystring) and POST (form). On success, 302 redirects to /pay/checkout-counter/{trade_id}. Signature uses MD5 of sorted params + secret_key of the api_keys row matching the submitted pid.
-// @Description  After signature verification, type accepts only either alipay or a supported type=token.network selector (for example usdt.tron). Token/network resolution is: supported selector first; otherwise request token/network; otherwise epay.default_token / epay.default_network. If token and network are still both empty, the order is created as status=4 placeholder. Supplying only one of token/network remains invalid.
-// @Description  Currency resolution is unchanged: request currency -> epay.default_currency -> cny. Supported type selectors bypass only token/network defaults, not currency fallback.
-// @Description  Success return/notify reuse the stored request type. On this branch that means either alipay or a supported token.network selector; when the request omitted type, outbound fallback remains alipay. The server injects internal payment_type=Epay after EPay signature verification; merchants do not send GMPay payment_type to this endpoint.
+// @Description  After signature verification, type accepts only either alipay or a supported type=token.network selector (for example usdt.tron), but it cannot override the initial payment asset. Initial token/network/currency are forced from epay.default_token, epay.default_network, and epay.default_currency. If both configured asset fields are empty, the order is created as a status=4 placeholder; supplying only one remains invalid. Empty currency falls back to cny.
+// @Description  Success return/notify reports the asset actually paid as token.network. The server injects internal payment_type=Epay after EPay signature verification; merchants do not send GMPay payment_type to this endpoint.
 // @Tags         Payment
 // @Accept       x-www-form-urlencoded
 // @Produce      html
@@ -143,6 +143,7 @@ func (c *BaseCommController) CreateTransactionAndRedirect(ctx echo.Context) (err
 	if raw, ok := ctx.Get(EPayTypeContextKey).(string); ok {
 		req.EpayType = strings.TrimSpace(raw)
 	}
+	service.ApplyConfiguredPaymentDefaults(req)
 	if err = c.ValidateStruct(ctx, req); err != nil {
 		log.Sugar.Errorf("validate request error: %v", err)
 		return c.FailJson(ctx, err)

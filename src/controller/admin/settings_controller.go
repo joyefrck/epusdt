@@ -31,9 +31,9 @@ import (
 //     rate.okx_c2c_enabled   (bool)   — use OKX C2C rate feed
 //
 //   - group=epay:
-//     epay.default_token     (string) — default token for EPAY submit.php, e.g. "usdt"; ignored when a supported type=token.network selector is supplied; empty allows status=4 placeholders when request token/network are also absent
-//     epay.default_currency  (string) — default fiat currency for EPAY submit.php, e.g. "cny"; still applies when a supported type selector is supplied; empty falls back to cny
-//     epay.default_network   (string) — default network for EPAY submit.php, e.g. "tron" or "ton"; ignored when a supported type=token.network selector is supplied; empty allows status=4 placeholders when request token/network are also absent
+//     epay.default_token     (string) — forced initial token for EPAY and GMPay orders, e.g. "usdt"; empty with an empty default network creates a status=4 placeholder
+//     epay.default_currency  (string) — forced initial fiat currency for EPAY and GMPay orders, e.g. "cny"; empty falls back to cny
+//     epay.default_network   (string) — forced initial network for EPAY and GMPay orders, e.g. "tron" or "ton"; empty with an empty default token creates a status=4 placeholder
 //
 //   - group=okpay:
 //     okpay.enabled          (bool)   — enable OkPay as a switch-network payment option
@@ -100,7 +100,7 @@ func (c *BaseAdminController) ListSettings(ctx echo.Context) error {
 // @Summary      Upsert settings
 // @Description  Batch insert/update settings. Returns per-key status; failed items include error_code for frontend i18n.
 // @Description  Supported groups: brand, rate, system, epay, okpay.
-// @Description  epay group keys: epay.default_token (e.g. "usdt" or "ton", ignored when a supported type=token.network selector is supplied, empty allows status=4 placeholders), epay.default_currency (e.g. "cny", still applies when a supported type selector is supplied, empty falls back to cny), epay.default_network (e.g. "tron" or "ton", ignored when a supported type=token.network selector is supplied, empty allows status=4 placeholders).
+// @Description  epay group keys: epay.default_token, epay.default_currency, and epay.default_network force the initial asset for both EPAY and GMPay orders. Empty token plus empty network creates a status=4 placeholder; empty currency falls back to cny.
 // @Description  okpay group keys: okpay.enabled, okpay.shop_id, okpay.shop_token, okpay.api_url, okpay.callback_url, okpay.return_url, okpay.timeout_seconds, okpay.allow_tokens.
 // @Description  rate group keys: rate.mode (fixed|auto, default fixed), rate.cache_ttl_seconds (10-86400, default 300), rate.forced_rate_list (JSON map, e.g. {"cny":{"usdt":0.14635,"ton":0.5}}; base/coin keys are normalized to lowercase; empty is restored to the built-in CNY USDT/USDC default), rate.api_url (optional; non-empty value must be a public http/https URL), rate.adjust_percent, rate.okx_c2c_enabled.
 // @Description  brand group keys: brand.checkout_name, brand.logo_url, brand.site_title, brand.success_copy, brand.support_url, brand.background_color, brand.background_image_url. Legacy aliases brand.site_name, brand.page_title and brand.pay_success_text are also supported.
