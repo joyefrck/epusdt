@@ -52,11 +52,12 @@ type ChangeApiKeyStatusRequest struct {
 // @Tags         Admin API Keys
 // @Security     AdminJWT
 // @Produce      json
+// @Param        include_deleted query bool false "Include deleted keys for historical merchant filters"
 // @Success      200 {object} response.ApiResponse{data=[]mdb.ApiKey}
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/api-keys [get]
 func (c *BaseAdminController) ListApiKeys(ctx echo.Context) error {
-	rows, err := data.ListApiKeys()
+	rows, err := data.ListApiKeys(ctx.QueryParam("include_deleted") == "true")
 	if err != nil {
 		return c.FailJson(ctx, err)
 	}

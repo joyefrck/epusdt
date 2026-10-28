@@ -55,7 +55,55 @@ func RuntimeInit() error {
 		color.Red.Printf("[runtime_db] sqlite migrate DB(EvmScanCursor),err=%s\n", err)
 		return err
 	}
+	if err = migrateLegacyBSCRuntimeNetwork(); err != nil {
+		color.Red.Printf("[runtime_db] migrate legacy BSC network,err=%s\n", err)
+		return err
+	}
 
 	log.Sugar.Debug("[runtime_db] sqlite connDB success")
 	return nil
+}
+
+func migrateLegacyBSCRuntimeNetwork() error {
+	return RuntimeDB.Transaction(func(tx *gorm.DB) error {
+		var cursors []mdb.EvmScanCursor
+		if err := tx.Where("network = ?", "bsc").Find(&cursors).Error; err != nil {
+			return err
+		}
+		for _, cursor := range cursors {
+			var targetCount int64
+			if err := tx.Model(&mdb.EvmScanCursor{}).Where("network = ?", mdb.NetworkBsc).Count(&targetCount).Error; err != nil {
+				return err
+			}
+			if targetCount > 0 {
+				if err := tx.Delete(&cursor).Error; err != nil {
+					return err
+				}
+			} else if err := tx.Model(&cursor).Update("network", mdb.NetworkBsc).Error; err != nil {
+				return err
+			}
+		}
+
+		var locks []mdb.TransactionLock
+		if err := tx.Where("network = ?", "bsc").Find(&locks).Error; err != nil {
+			return err
+		}
+		for _, lock := range locks {
+			var targetCount int64
+			if err := tx.Model(&mdb.TransactionLock{}).
+				Where("network = ? AND address = ? AND token = ? AND amount_scaled = ? AND amount_precision = ?",
+					mdb.NetworkBsc, lock.Address, lock.Token, lock.AmountScaled, lock.AmountPrecision).
+				Count(&targetCount).Error; err != nil {
+				return err
+			}
+			if targetCount > 0 {
+				if err := tx.Delete(&lock).Error; err != nil {
+					return err
+				}
+			} else if err := tx.Model(&lock).Update("network", mdb.NetworkBsc).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

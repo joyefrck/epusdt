@@ -6,6 +6,7 @@ import (
 
 	"github.com/GMWalletApp/epusdt/model/dao"
 	"github.com/GMWalletApp/epusdt/model/mdb"
+	"gorm.io/gorm"
 )
 
 // DailyStat is one bucket of day-level aggregation used by the
@@ -51,6 +52,11 @@ func statsBucketExprForDialect(dialect, column string, hourly bool) (string, err
 			return fmt.Sprintf("TO_CHAR(%s, 'YYYY-MM-DD HH24:00')", column), nil
 		}
 		return fmt.Sprintf("TO_CHAR(%s, 'YYYY-MM-DD')", column), nil
+	case "mysql":
+		if hourly {
+			return fmt.Sprintf("DATE_FORMAT(%s, '%%Y-%%m-%%d %%H:00')", column), nil
+		}
+		return fmt.Sprintf("DATE(%s)", column), nil
 	default:
 		return "", fmt.Errorf("unsupported database dialect for dashboard stats: %s", dialect)
 	}
@@ -61,8 +67,8 @@ func statsBucketExprForDialect(dialect, column string, hourly bool) (string, err
 // Only orders in StatusPaySuccess contribute to Amount sums — that's
 // what the user means by "流水". Pending orders count toward OrderCount
 // to keep成交率 computable.
-func DailyOrderStats(start, end time.Time) ([]DailyStat, error) {
-	rows, err := queryOrderStats(start, end, false)
+func DailyOrderStats(start, end time.Time, merchant ...*uint64) ([]DailyStat, error) {
+	rows, err := queryOrderStats(start, end, false, merchant...)
 	if err != nil {
 		return nil, err
 	}
@@ -71,21 +77,21 @@ func DailyOrderStats(start, end time.Time) ([]DailyStat, error) {
 
 // HourlyOrderStats returns per-hour counts/amounts within [start, end],
 // zero-filling any hours that have no orders.
-func HourlyOrderStats(start, end time.Time) ([]DailyStat, error) {
-	rows, err := queryOrderStats(start, end, true)
+func HourlyOrderStats(start, end time.Time, merchant ...*uint64) ([]DailyStat, error) {
+	rows, err := queryOrderStats(start, end, true, merchant...)
 	if err != nil {
 		return nil, err
 	}
 	return fillHourlyStats(start, end, rows), nil
 }
 
-func queryOrderStats(start, end time.Time, hourly bool) ([]DailyStat, error) {
+func queryOrderStats(start, end time.Time, hourly bool, merchant ...*uint64) ([]DailyStat, error) {
 	var rows []DailyStat
 	bucket, err := statsBucketExpr("created_at", hourly)
 	if err != nil {
 		return nil, err
 	}
-	err = dao.Mdb.Model(&mdb.Orders{}).
+	err = merchantOrderQuery(merchant...).
 		Select(fmt.Sprintf(`%s AS day,
             COUNT(*) AS order_count,
             SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS success_count,
@@ -146,8 +152,8 @@ func fillHourlyStats(start, end time.Time, rows []DailyStat) []DailyStat {
 
 // DailyAssetByAddress groups paid actual_amount by (day, receive_address)
 // for the per-address stacked chart, zero-filling missing days.
-func DailyAssetByAddress(start, end time.Time) ([]AddressDailyStat, error) {
-	rows, err := queryAssetByAddress(start, end, false)
+func DailyAssetByAddress(start, end time.Time, merchant ...*uint64) ([]AddressDailyStat, error) {
+	rows, err := queryAssetByAddress(start, end, false, merchant...)
 	if err != nil {
 		return nil, err
 	}
@@ -156,21 +162,21 @@ func DailyAssetByAddress(start, end time.Time) ([]AddressDailyStat, error) {
 
 // HourlyAssetByAddress groups paid actual_amount by (hour, receive_address)
 // for the per-address stacked chart, zero-filling missing hours.
-func HourlyAssetByAddress(start, end time.Time) ([]AddressDailyStat, error) {
-	rows, err := queryAssetByAddress(start, end, true)
+func HourlyAssetByAddress(start, end time.Time, merchant ...*uint64) ([]AddressDailyStat, error) {
+	rows, err := queryAssetByAddress(start, end, true, merchant...)
 	if err != nil {
 		return nil, err
 	}
 	return fillAddressHourlyStats(start, end, rows), nil
 }
 
-func queryAssetByAddress(start, end time.Time, hourly bool) ([]AddressDailyStat, error) {
+func queryAssetByAddress(start, end time.Time, hourly bool, merchant ...*uint64) ([]AddressDailyStat, error) {
 	var rows []AddressDailyStat
 	bucket, err := statsBucketExpr("created_at", hourly)
 	if err != nil {
 		return nil, err
 	}
-	err = dao.Mdb.Model(&mdb.Orders{}).
+	err = merchantOrderQuery(merchant...).
 		Select(fmt.Sprintf(`%s AS day,
             receive_address AS address,
             SUM(actual_amount) AS actual_amount`, bucket)).
@@ -237,9 +243,9 @@ func fillAddressStats(start, end time.Time, rows []AddressDailyStat, hourly bool
 
 // SumPaidActualAmount returns the total paid actual_amount across all
 // time. Used by the overview "total asset" card.
-func SumPaidActualAmount() (float64, error) {
+func SumPaidActualAmount(merchant ...*uint64) (float64, error) {
 	var sum float64
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrderQuery(merchant...).
 		Select("COALESCE(SUM(actual_amount), 0)").
 		Where("status = ?", mdb.StatusPaySuccess).
 		Scan(&sum).Error
@@ -248,14 +254,14 @@ func SumPaidActualAmount() (float64, error) {
 
 // PaidStatsInRange returns (order_count, success_count, actual_sum) for
 // a given time range. Caller chooses the range (today / last 7 days).
-func PaidStatsInRange(start, end time.Time) (int64, int64, float64, error) {
+func PaidStatsInRange(start, end time.Time, merchant ...*uint64) (int64, int64, float64, error) {
 	type row struct {
 		OrderCount   int64
 		SuccessCount int64
 		ActualSum    float64
 	}
 	var r row
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrderQuery(merchant...).
 		Select(`COUNT(*) AS order_count,
             SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS success_count,
             SUM(CASE WHEN status = ? THEN actual_amount ELSE 0 END) AS actual_sum`,
@@ -268,9 +274,9 @@ func PaidStatsInRange(start, end time.Time) (int64, int64, float64, error) {
 
 // ActiveAddressCountInRange returns the number of distinct wallet addresses
 // that appear in at least one order within [start, end].
-func ActiveAddressCountInRange(start, end time.Time) (int64, error) {
+func ActiveAddressCountInRange(start, end time.Time, merchant ...*uint64) (int64, error) {
 	var count int64
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrderQuery(merchant...).
 		Where("created_at >= ?", start).
 		Where("created_at <= ?", end).
 		Distinct("receive_address").
@@ -281,7 +287,7 @@ func ActiveAddressCountInRange(start, end time.Time) (int64, error) {
 // AveragePaymentDurationSeconds returns the mean elapsed time between
 // created_at and updated_at for orders that reached StatusPaySuccess
 // in the given range. Zero-safe when no rows match.
-func AveragePaymentDurationSeconds(start, end time.Time) (float64, error) {
+func AveragePaymentDurationSeconds(start, end time.Time, merchant ...*uint64) (float64, error) {
 	type row struct {
 		Avg float64
 	}
@@ -293,7 +299,7 @@ func AveragePaymentDurationSeconds(start, end time.Time) (float64, error) {
 		UpdatedAt time.Time
 	}
 	var pairs []pair
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrderQuery(merchant...).
 		Select("created_at, updated_at").
 		Where("status = ?", mdb.StatusPaySuccess).
 		Where("created_at >= ?", start).
@@ -314,9 +320,9 @@ func AveragePaymentDurationSeconds(start, end time.Time) (float64, error) {
 }
 
 // CountExpiredInRange returns the number of StatusExpired orders in range.
-func CountExpiredInRange(start, end time.Time) (int64, error) {
+func CountExpiredInRange(start, end time.Time, merchant ...*uint64) (int64, error) {
 	var n int64
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrderQuery(merchant...).
 		Where("status = ?", mdb.StatusExpired).
 		Where("created_at >= ?", start).
 		Where("created_at <= ?", end).
@@ -325,7 +331,7 @@ func CountExpiredInRange(start, end time.Time) (int64, error) {
 }
 
 // RecentOrders returns the latest N orders regardless of status.
-func RecentOrders(limit int) ([]mdb.Orders, error) {
+func RecentOrders(limit int, merchant ...*uint64) ([]mdb.Orders, error) {
 	if limit < 1 {
 		limit = 20
 	}
@@ -333,7 +339,7 @@ func RecentOrders(limit int) ([]mdb.Orders, error) {
 		limit = 100
 	}
 	var rows []mdb.Orders
-	err := dao.Mdb.Model(&mdb.Orders{}).
+	err := merchantOrderQuery(merchant...).
 		Order("id DESC").
 		Limit(limit).
 		Find(&rows).Error
@@ -345,4 +351,13 @@ func CountEnabledChains() (int64, error) {
 	var n int64
 	err := dao.Mdb.Model(&mdb.Chain{}).Where("enabled = ?", true).Count(&n).Error
 	return n, err
+}
+
+// nil means all merchants; a pointer to zero selects unassigned legacy orders.
+func merchantOrderQuery(merchant ...*uint64) *gorm.DB {
+	tx := dao.Mdb.Model(&mdb.Orders{})
+	if len(merchant) > 0 && merchant[0] != nil {
+		tx = tx.Where("api_key_id = ?", *merchant[0])
+	}
+	return tx
 }

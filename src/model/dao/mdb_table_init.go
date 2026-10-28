@@ -2,6 +2,8 @@ package dao
 
 import (
 	"encoding/json"
+	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -9,15 +11,20 @@ import (
 	"github.com/GMWalletApp/epusdt/config"
 	"github.com/GMWalletApp/epusdt/model/mdb"
 	"github.com/gookit/color"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-var once sync.Once
+var (
+	once            sync.Once
+	mdbTableInitErr error
+)
 
 // ResetMdbTableInitForTest resets the install/startup migration guard so tests
 // can exercise fresh temporary databases in the same process.
 func ResetMdbTableInitForTest() {
 	once = sync.Once{}
+	mdbTableInitErr = nil
 }
 
 // MdbTableInit performs AutoMigrate for all primary DB tables and seeds
@@ -27,7 +34,7 @@ func ResetMdbTableInitForTest() {
 // established.  The install wizard (see install/installer.go) writes the
 // .env file before bootstrap runs, so this function always finds the DB
 // available.
-func MdbTableInit() {
+func MdbTableInit() error {
 	once.Do(func() {
 		migrations := []struct {
 			name  string
@@ -46,18 +53,128 @@ func MdbTableInit() {
 			{"ProviderOrder", &mdb.ProviderOrder{}},
 		}
 		for _, m := range migrations {
-			if err := Mdb.AutoMigrate(m.model); err != nil {
+			if err := autoMigrateModel(m.model); err != nil {
 				color.Red.Printf("[store_db] AutoMigrate DB(%s),err=%s\n", m.name, err)
+				mdbTableInitErr = fmt.Errorf("AutoMigrate DB(%s): %w", m.name, err)
 				return
 			}
 		}
 
+		if err := migrateLegacyBSCNetwork(); err != nil {
+			color.Red.Printf("[store_db] migrate legacy BSC network,err=%s\n", err)
+			mdbTableInitErr = fmt.Errorf("migrate legacy BSC network: %w", err)
+			return
+		}
 		seedChains()
 		backfillRpcNodePurpose()
 		seedRpcNodes()
 		seedChainTokens()
 		seedDefaultSettings()
 		seedTelegramChannelFromSettings()
+		if err := migrateMerchantWallets(Mdb); err != nil {
+			mdbTableInitErr = fmt.Errorf("migrate merchant wallets: %w", err)
+			return
+		}
+	})
+	return mdbTableInitErr
+}
+
+// autoMigrateModel works around a GORM/MySQL mismatch for single-column
+// uniqueIndex tags. MySQL reports these columns as unique, then GORM attempts
+// to drop a derived UNIQUE constraint as a foreign key and aborts with 1091.
+// Temporarily removing only the model-declared single-column unique indexes
+// lets AutoMigrate update the schema; the indexes are always restored, even if
+// a later migration step fails.
+func autoMigrateModel(model interface{}) error {
+	if Mdb.Dialector.Name() != "mysql" {
+		return Mdb.AutoMigrate(model)
+	}
+
+	indexNames, err := singleColumnUniqueIndexNames(model)
+	if err != nil {
+		return err
+	}
+	var dropped []string
+	for _, indexName := range indexNames {
+		if !Mdb.Migrator().HasIndex(model, indexName) {
+			continue
+		}
+		if err := Mdb.Migrator().DropIndex(model, indexName); err != nil {
+			return combineMigrationErrors(err, ensureUniqueIndexes(model, dropped))
+		}
+		dropped = append(dropped, indexName)
+	}
+
+	migrateErr := Mdb.AutoMigrate(model)
+	return combineMigrationErrors(migrateErr, ensureUniqueIndexes(model, dropped))
+}
+
+func singleColumnUniqueIndexNames(model interface{}) ([]string, error) {
+	stmt := &gorm.Statement{DB: Mdb}
+	if err := stmt.Parse(model); err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, index := range stmt.Schema.ParseIndexes() {
+		if index.Class == "UNIQUE" && len(index.Fields) == 1 {
+			names = append(names, index.Name)
+		}
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func ensureUniqueIndexes(model interface{}, indexNames []string) error {
+	for _, indexName := range indexNames {
+		if Mdb.Migrator().HasIndex(model, indexName) {
+			continue
+		}
+		if err := Mdb.Migrator().CreateIndex(model, indexName); err != nil {
+			return fmt.Errorf("restore unique index %s: %w", indexName, err)
+		}
+	}
+	return nil
+}
+
+func combineMigrationErrors(migrateErr, restoreErr error) error {
+	if migrateErr == nil {
+		return restoreErr
+	}
+	if restoreErr == nil {
+		return migrateErr
+	}
+	return fmt.Errorf("migration failed: %v; unique-index restore failed: %w", migrateErr, restoreErr)
+}
+
+// migrateLegacyBSCNetwork upgrades the pre-v2 network identifier before v2
+// seeds create any binance rows. If a target chain already exists, the
+// migration is skipped as a unit so a partially migrated database is never
+// rewritten across unique indexes without operator review.
+func migrateLegacyBSCNetwork() error {
+	var legacyChains, targetChains int64
+	if err := Mdb.Model(&mdb.Chain{}).Where("network = ?", "bsc").Count(&legacyChains).Error; err != nil {
+		return err
+	}
+	if legacyChains == 0 {
+		return nil
+	}
+	if err := Mdb.Model(&mdb.Chain{}).Where("network = ?", mdb.NetworkBsc).Count(&targetChains).Error; err != nil {
+		return err
+	}
+	if targetChains > 0 {
+		color.Yellow.Printf("[store_db] legacy bsc and binance chain rows both exist; automatic network migration skipped\n")
+		return nil
+	}
+
+	return Mdb.Transaction(func(tx *gorm.DB) error {
+		for _, model := range []interface{}{
+			&mdb.Orders{}, &mdb.WalletAddress{}, &mdb.ChainToken{}, &mdb.RpcNode{}, &mdb.Chain{},
+		} {
+			if err := tx.Model(model).Where("network = ?", "bsc").Update("network", mdb.NetworkBsc).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -208,7 +325,7 @@ func defaultRateModeForSeed() string {
 	}
 
 	var apiSetting mdb.Setting
-	if err := Mdb.Where("key = ?", mdb.SettingKeyRateApiUrl).Limit(1).Find(&apiSetting).Error; err != nil {
+	if err := Mdb.Where("`key` = ?", mdb.SettingKeyRateApiUrl).Limit(1).Find(&apiSetting).Error; err != nil {
 		color.Red.Printf("[store_db] detect legacy rate api setting err=%s\n", err)
 	}
 	if strings.TrimSpace(apiSetting.Value) != "" || strings.TrimSpace(config.GetRateApiUrlFromEnv()) != "" {
@@ -256,7 +373,7 @@ func SyncTelegramChannelFromSettings() {
 		"system.telegram_abnormal_notice_enabled",
 	}
 	var rows []mdb.Setting
-	if err := Mdb.Where("key IN ?", keys).Find(&rows).Error; err != nil {
+	if err := Mdb.Where("`key` IN ?", keys).Find(&rows).Error; err != nil {
 		color.Red.Printf("[store_db] sync telegram channel: read settings err=%s\n", err)
 		return
 	}

@@ -13,6 +13,7 @@ import (
 // list page. Zero values are ignored so callers can pass only what the
 // user actually filtered on.
 type OrderListFilter struct {
+	ApiKeyID *uint64
 	Status   int
 	Network  string
 	Token    string
@@ -54,7 +55,7 @@ func ListOrders(f OrderListFilter) ([]mdb.Orders, int64, error) {
 }
 
 func buildOrderListQuery(f OrderListFilter) *gorm.DB {
-	tx := dao.Mdb.Model(&mdb.Orders{})
+	tx := merchantOrderQuery(f.ApiKeyID)
 	if f.ParentOnly {
 		tx = tx.Where("parent_trade_id = ?", "")
 	}

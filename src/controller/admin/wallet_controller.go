@@ -13,14 +13,16 @@ import (
 
 // AdminAddWalletRequest is the payload for adding a wallet via admin.
 type AdminAddWalletRequest struct {
-	Network string `json:"network" validate:"required" example:"tron"`
-	Address string `json:"address" validate:"required" example:"TTestTronAddress001"`
-	Remark  string `json:"remark" example:"主钱包"`
+	ApiKeyID uint64 `json:"api_key_id" validate:"required"`
+	Network  string `json:"network" validate:"required" example:"tron"`
+	Address  string `json:"address" validate:"required" example:"TTestTronAddress001"`
+	Remark   string `json:"remark" example:"主钱包"`
 }
 
-// AdminUpdateWalletRequest is the payload for updating a wallet remark.
+// AdminUpdateWalletRequest patches merchant ownership and wallet remark.
 type AdminUpdateWalletRequest struct {
-	Remark *string `json:"remark" example:"已更新的备注"`
+	ApiKeyID *uint64 `json:"api_key_id"`
+	Remark   *string `json:"remark" example:"已更新的备注"`
 }
 
 // AdminChangeWalletStatusRequest is the payload for toggling wallet status.
@@ -31,7 +33,8 @@ type AdminChangeWalletStatusRequest struct {
 
 // AdminBatchImportRequest is the payload for batch importing wallets.
 type AdminBatchImportRequest struct {
-	Network string `json:"network" validate:"required" example:"tron"`
+	ApiKeyID uint64 `json:"api_key_id" validate:"required"`
+	Network  string `json:"network" validate:"required" example:"tron"`
 	// Addresses listed as observation-only wallets. Private-key import
 	// and API-managed modes are out of scope for v1.
 	Addresses []string `json:"addresses" validate:"required" example:"TAddr001,TAddr002,TAddr003"`
@@ -40,7 +43,10 @@ type AdminBatchImportRequest struct {
 // WalletListItem extends WalletAddress with order count.
 type WalletListItem struct {
 	mdb.WalletAddress
-	OrderCount int64 `json:"order_count" example:"5"`
+	OrderCount      int64  `json:"order_count" example:"5"`
+	MerchantName    string `json:"merchant_name"`
+	MerchantPID     string `json:"merchant_pid"`
+	MerchantDeleted bool   `json:"merchant_deleted"`
 }
 
 // AdminListWallets extends the read model with per-wallet order counts
@@ -51,17 +57,25 @@ type WalletListItem struct {
 // @Security     AdminJWT
 // @Produce      json
 // @Param        network query string false "Network filter"
+// @Param        api_key_id query int false "Merchant Key ID (0=unbound, omitted=all)"
 // @Param        status query int false "Status filter (1=enabled, 2=disabled)"
 // @Param        keyword query string false "Search by address or remark"
 // @Success      200 {object} response.ApiResponse{data=[]admin.WalletListItem}
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/wallets [get]
 func (c *BaseAdminController) AdminListWallets(ctx echo.Context) error {
+	merchant, err := parseMerchantFilter(ctx)
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
 	network := strings.ToLower(strings.TrimSpace(ctx.QueryParam("network")))
 	status := strings.TrimSpace(ctx.QueryParam("status"))
 	keyword := strings.TrimSpace(ctx.QueryParam("keyword"))
 
 	tx := dao.Mdb.Model(&mdb.WalletAddress{})
+	if merchant != nil {
+		tx = tx.Where("api_key_id = ?", *merchant)
+	}
 	if network != "" {
 		tx = tx.Where("network = ?", network)
 	}
@@ -79,13 +93,9 @@ func (c *BaseAdminController) AdminListWallets(ctx echo.Context) error {
 		return c.FailJson(ctx, err)
 	}
 
-	counts, err := data.CountOrdersByAddress()
+	out, err := walletListItems(rows)
 	if err != nil {
 		return c.FailJson(ctx, err)
-	}
-	out := make([]WalletListItem, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, WalletListItem{WalletAddress: r, OrderCount: counts[r.Address]})
 	}
 	return c.SucJson(ctx, out)
 }
@@ -110,20 +120,10 @@ func (c *BaseAdminController) AdminAddWallet(ctx echo.Context) error {
 	if err := c.ValidateStruct(ctx, req); err != nil {
 		return c.FailJson(ctx, err)
 	}
-	row, err := data.AddWalletAddressWithNetwork(req.Network, req.Address)
+	row, err := data.AddMerchantWallet(req.Network, req.Address, req.Remark, mdb.WalletSourceManual, req.ApiKeyID)
 	if err != nil {
 		return c.FailJson(ctx, err)
 	}
-	// Patch remark/source separately to avoid changing the existing
-	// package-level AddWalletAddressWithNetwork signature (used by
-	// Telegram bot + legacy endpoint).
-	fields := map[string]interface{}{"source": mdb.WalletSourceManual}
-	if req.Remark != "" {
-		fields["remark"] = req.Remark
-	}
-	_ = dao.Mdb.Model(&mdb.WalletAddress{}).Where("id = ?", row.ID).Updates(fields).Error
-	row.Remark = req.Remark
-	row.Source = mdb.WalletSourceManual
 	return c.SucJson(ctx, row)
 }
 
@@ -149,13 +149,16 @@ func (c *BaseAdminController) AdminGetWallet(ctx echo.Context) error {
 	if wallet.ID == 0 {
 		return c.FailJson(ctx, constant.WalletNotFoundErr)
 	}
-	counts, _ := data.CountOrdersByAddress()
-	return c.SucJson(ctx, WalletListItem{WalletAddress: *wallet, OrderCount: counts[wallet.Address]})
+	items, err := walletListItems([]mdb.WalletAddress{*wallet})
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
+	return c.SucJson(ctx, items[0])
 }
 
-// AdminUpdateWallet only patches remark (status has its own endpoint).
+// AdminUpdateWallet patches merchant binding and remark (status has its own endpoint).
 // @Summary      Update wallet (admin)
-// @Description  Patch wallet remark
+// @Description  Patch wallet merchant binding and remark
 // @Tags         Admin Wallets
 // @Security     AdminJWT
 // @Accept       json
@@ -174,14 +177,7 @@ func (c *BaseAdminController) AdminUpdateWallet(ctx echo.Context) error {
 	if err := ctx.Bind(req); err != nil {
 		return c.FailJson(ctx, constant.ParamsMarshalErr)
 	}
-	fields := map[string]interface{}{}
-	if req.Remark != nil {
-		fields["remark"] = *req.Remark
-	}
-	if len(fields) == 0 {
-		return c.SucJson(ctx, nil)
-	}
-	if err := dao.Mdb.Model(&mdb.WalletAddress{}).Where("id = ?", id).Updates(fields).Error; err != nil {
+	if err := data.UpdateMerchantWallet(id, req.ApiKeyID, req.Remark); err != nil {
 		return c.FailJson(ctx, err)
 	}
 	return c.SucJson(ctx, nil)
@@ -267,15 +263,43 @@ func (c *BaseAdminController) AdminBatchImportWallets(ctx echo.Context) error {
 	}
 	out := make([]result, 0, len(req.Addresses))
 	for _, addr := range req.Addresses {
-		row, err := data.AddWalletAddressWithNetwork(req.Network, addr)
+		_, err := data.AddMerchantWallet(req.Network, addr, "", mdb.WalletSourceImport, req.ApiKeyID)
 		if err != nil {
 			code, msg := constant.ResolveErrno(err)
 			out = append(out, result{Address: addr, OK: false, ErrorCode: code, Error: msg})
 			continue
 		}
-		_ = dao.Mdb.Model(&mdb.WalletAddress{}).Where("id = ?", row.ID).
-			Update("source", mdb.WalletSourceImport).Error
 		out = append(out, result{Address: addr, OK: true})
 	}
 	return c.SucJson(ctx, out)
+}
+
+// Fetch names in one query, including deleted keys for historical ownership.
+func walletListItems(rows []mdb.WalletAddress) ([]WalletListItem, error) {
+	ids := make([]uint64, 0, len(rows))
+	for _, row := range rows {
+		if row.ApiKeyID > 0 {
+			ids = append(ids, row.ApiKeyID)
+		}
+	}
+	keys := map[uint64]mdb.ApiKey{}
+	if len(ids) > 0 {
+		var merchants []mdb.ApiKey
+		if err := dao.Mdb.Unscoped().Select("id, name, pid, deleted_at").Where("id IN ?", ids).Find(&merchants).Error; err != nil {
+			return nil, err
+		}
+		for _, key := range merchants {
+			keys[key.ID] = key
+		}
+	}
+	counts, err := data.CountOrdersByAddress()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WalletListItem, 0, len(rows))
+	for _, row := range rows {
+		key := keys[row.ApiKeyID]
+		out = append(out, WalletListItem{WalletAddress: row, OrderCount: counts[row.Address], MerchantName: key.Name, MerchantPID: key.Pid, MerchantDeleted: key.DeletedAt.Valid})
+	}
+	return out, nil
 }

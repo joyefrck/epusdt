@@ -105,8 +105,8 @@ func setupTestEnv(t *testing.T) *echo.Echo {
 	}
 
 	// seed wallet addresses
-	dao.Mdb.Create(&mdb.WalletAddress{Network: mdb.NetworkTron, Address: "TTestTronAddress001", Status: mdb.TokenStatusEnable})
-	dao.Mdb.Create(&mdb.WalletAddress{Network: mdb.NetworkSolana, Address: "SolTestAddress001", Status: mdb.TokenStatusEnable})
+	dao.Mdb.Create(&mdb.WalletAddress{Network: mdb.NetworkTron, Address: "TTestTronAddress001", ApiKeyID: 1, Status: mdb.TokenStatusEnable})
+	dao.Mdb.Create(&mdb.WalletAddress{Network: mdb.NetworkSolana, Address: "SolTestAddress001", ApiKeyID: 1, Status: mdb.TokenStatusEnable})
 	// seed chains so scanners know the test networks are "enabled".
 	// Use ON CONFLICT DO NOTHING: MdbTableInit (called via DBInit) uses sync.Once
 	// and may have already seeded these rows into this DB on the first test run.
@@ -146,6 +146,8 @@ func setupTestEnv(t *testing.T) *echo.Echo {
 		Status:    mdb.ApiKeyStatusEnable,
 	})
 
+	dao.Mdb.Create(&mdb.WalletAddress{Network: mdb.NetworkTron, Address: "TEpayTronAddress002", Status: 1, ApiKeyID: 2})
+	dao.Mdb.Create(&mdb.WalletAddress{Network: mdb.NetworkSolana, Address: "SolEpayAddress002", Status: 1, ApiKeyID: 2})
 	e := echo.New()
 	RegisterRoute(e)
 	return e
@@ -1420,7 +1422,7 @@ func TestEpaySubmitPhpRequestTokenNetworkCannotOverrideDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload epay order: %v", err)
 	}
-	if order.Network != mdb.NetworkTron || order.ReceiveAddress != "TTestTronAddress001" || order.Token != "USDT" {
+	if order.Network != mdb.NetworkTron || order.ReceiveAddress != "TEpayTronAddress002" || order.Token != "USDT" {
 		t.Fatalf("epay forced-default order fields = network %q address %q token %q", order.Network, order.ReceiveAddress, order.Token)
 	}
 	if order.PaymentType != mdb.PaymentTypeEpay {
@@ -1465,7 +1467,7 @@ func TestEpaySubmitPhpTypeSelectorCannotOverrideDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload epay selector order: %v", err)
 	}
-	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != "TTestTronAddress001" {
+	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != "TEpayTronAddress002" {
 		t.Fatalf("selector order fields = token %q network %q address %q", order.Token, order.Network, order.ReceiveAddress)
 	}
 	if order.Currency != "CNY" {
@@ -1514,7 +1516,7 @@ func TestEpaySubmitPhpTypeSelectorUsesDefaultCurrencyWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload epay selector order: %v", err)
 	}
-	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != "TTestTronAddress001" {
+	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != "TEpayTronAddress002" {
 		t.Fatalf("selector order fields = token %q network %q address %q", order.Token, order.Network, order.ReceiveAddress)
 	}
 	if order.Currency != "USD" {
@@ -1600,7 +1602,7 @@ func TestEpaySubmitPhpWithoutTypeUsesConfiguredAssetType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload epay empty-type order: %v", err)
 	}
-	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != "TTestTronAddress001" {
+	if order.Token != "USDT" || order.Network != mdb.NetworkTron || order.ReceiveAddress != "TEpayTronAddress002" {
 		t.Fatalf("empty-type order fields = token %q network %q address %q", order.Token, order.Network, order.ReceiveAddress)
 	}
 	if order.EpayType != "usdt.tron" {
@@ -1757,7 +1759,7 @@ func TestEpaySubmitPhpTypeSelectorPostFormCompatible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload epay post selector order: %v", err)
 	}
-	if order.Token != "USDT" || order.Network != mdb.NetworkSolana || order.ReceiveAddress != "SolTestAddress001" {
+	if order.Token != "USDT" || order.Network != mdb.NetworkSolana || order.ReceiveAddress != "SolEpayAddress002" {
 		t.Fatalf("post selector order fields = token %q network %q address %q", order.Token, order.Network, order.ReceiveAddress)
 	}
 	if order.EpayType != "usdt.solana" {

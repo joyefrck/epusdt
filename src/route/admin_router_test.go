@@ -670,8 +670,9 @@ func TestAdminWallets_CRUD(t *testing.T) {
 
 	// Add a new wallet.
 	rec = doPostAdmin(e, "/admin/api/v1/wallets", map[string]interface{}{
-		"network": "ethereum",
-		"address": "0xTestEthAddress001",
+		"api_key_id": 1,
+		"network":    "ethereum",
+		"address":    "0xTestEthAddress001",
 	}, token)
 	t.Logf("AddWallet: %s", rec.Body.String())
 	resp2 := assertOK(t, rec)
@@ -711,8 +712,9 @@ func TestAdminWallets_CRUD(t *testing.T) {
 func TestAdminWallets_BatchImport(t *testing.T) {
 	e, token := setupAdminTestEnv(t)
 	rec := doPostAdmin(e, "/admin/api/v1/wallets/batch-import", map[string]interface{}{
-		"network":   "ethereum",
-		"addresses": []string{"0xBatchAddr001", "0xBatchAddr002"},
+		"api_key_id": 1,
+		"network":    "ethereum",
+		"addresses":  []string{"0xBatchAddr001", "0xBatchAddr002"},
 	}, token)
 	t.Logf("BatchImportWallets: %s", rec.Body.String())
 	assertOK(t, rec)
@@ -2291,7 +2293,7 @@ func TestAdminOrders_ListWithSubExcludesSubOrdersFromTopLevel(t *testing.T) {
 	// Seed Ethereum wallet and chain_token so SwitchNetwork can allocate
 	// a sub-order on that network. The chain record is already seeded by
 	// MdbTableInit; only the wallet address and token are needed here.
-	dao.Mdb.Create(&mdb.WalletAddress{
+	dao.Mdb.Create(&mdb.WalletAddress{ApiKeyID: 1,
 		Network: mdb.NetworkEthereum,
 		Address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Status:  mdb.TokenStatusEnable,

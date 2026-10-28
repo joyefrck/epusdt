@@ -99,7 +99,7 @@ func TestCreateTransactionRejectsPrivateNotifyURL(t *testing.T) {
 	req := newCreateTransactionRequest("order_private_notify_url", 1)
 	req.NotifyUrl = "http://127.0.0.1/notify"
 
-	if _, err := CreateTransaction(req, nil); err != constant.NotifyURLErr {
+	if _, err := CreateTransaction(req, testOrderMerchant()); err != constant.NotifyURLErr {
 		t.Fatalf("CreateTransaction error = %v, want %v", err, constant.NotifyURLErr)
 	}
 }
@@ -111,7 +111,7 @@ func TestCreateTransactionCreatesWaitSelectPlaceholderWithoutTokenNetwork(t *tes
 	req := newCreateTransactionRequest("order_wait_select_1", 12.34)
 	req.Token = ""
 	req.Network = ""
-	resp, err := CreateTransaction(req, nil)
+	resp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create placeholder transaction: %v", err)
 	}
@@ -151,13 +151,13 @@ func TestCreateTransactionRejectsPartialTokenNetwork(t *testing.T) {
 
 	req := newCreateTransactionRequest("order_partial_token_network_1", 1)
 	req.Token = ""
-	if _, err := CreateTransaction(req, nil); err != constant.ParamsMarshalErr {
+	if _, err := CreateTransaction(req, testOrderMerchant()); err != constant.ParamsMarshalErr {
 		t.Fatalf("missing token error = %v, want %v", err, constant.ParamsMarshalErr)
 	}
 
 	req = newCreateTransactionRequest("order_partial_token_network_2", 1)
 	req.Network = ""
-	if _, err := CreateTransaction(req, nil); err != constant.ParamsMarshalErr {
+	if _, err := CreateTransaction(req, testOrderMerchant()); err != constant.ParamsMarshalErr {
 		t.Fatalf("missing network error = %v, want %v", err, constant.ParamsMarshalErr)
 	}
 }
@@ -167,7 +167,7 @@ func TestCreateTransactionForcesConfiguredPaymentDefaults(t *testing.T) {
 	defer cleanup()
 
 	setConfiguredPaymentDefaults(t, "usdt", mdb.NetworkEthereum, "cny")
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455668"); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455668", 1); err != nil {
 		t.Fatalf("add ethereum wallet: %v", err)
 	}
 
@@ -175,7 +175,7 @@ func TestCreateTransactionForcesConfiguredPaymentDefaults(t *testing.T) {
 	req.Token = "USDT"
 	req.Network = mdb.NetworkTron
 	req.Currency = "USD"
-	resp, err := CreateTransaction(req, nil)
+	resp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create transaction: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestCreateTransactionUsesPlaceholderWhenConfiguredDefaultsEmpty(t *testing.
 
 	setConfiguredPaymentDefaults(t, "", "", "cny")
 	req := newCreateTransactionRequest("order_forced_defaults_empty_1", 10)
-	resp, err := CreateTransaction(req, nil)
+	resp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create placeholder: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestCreateTransactionRejectsPartialConfiguredDefaults(t *testing.T) {
 	defer cleanup()
 
 	setConfiguredPaymentDefaults(t, "usdt", "", "cny")
-	if _, err := CreateTransaction(newCreateTransactionRequest("order_forced_defaults_partial_1", 10), nil); err != constant.ParamsMarshalErr {
+	if _, err := CreateTransaction(newCreateTransactionRequest("order_forced_defaults_partial_1", 10), testOrderMerchant()); err != constant.ParamsMarshalErr {
 		t.Fatalf("partial defaults error = %v, want %v", err, constant.ParamsMarshalErr)
 	}
 }
@@ -221,7 +221,7 @@ func TestCreateTransactionNormalizesEpayPaymentTypeCase(t *testing.T) {
 	req.Token = ""
 	req.Network = ""
 	req.PaymentType = "epay"
-	resp, err := CreateTransaction(req, nil)
+	resp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create epay-compatible transaction: %v", err)
 	}
@@ -238,15 +238,15 @@ func TestCreateTransactionAssignsIncrementedAmountsAndLocks(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("wallet_1"); err != nil {
+	if _, err := data.AddWalletAddress("wallet_1", 1); err != nil {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp1, err := CreateTransaction(newCreateTransactionRequest("order_1", 1), nil)
+	resp1, err := CreateTransaction(newCreateTransactionRequest("order_1", 1), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create first transaction: %v", err)
 	}
-	resp2, err := CreateTransaction(newCreateTransactionRequest("order_2", 1), nil)
+	resp2, err := CreateTransaction(newCreateTransactionRequest("order_2", 1), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create second transaction: %v", err)
 	}
@@ -288,15 +288,15 @@ func TestCreateTransactionUsesConfiguredAmountPrecision(t *testing.T) {
 	if err := data.SetSetting(mdb.SettingGroupSystem, mdb.SettingKeyAmountPrecision, "4", mdb.SettingTypeInt); err != nil {
 		t.Fatalf("set amount precision: %v", err)
 	}
-	if _, err := data.AddWalletAddress("wallet_precision_1"); err != nil {
+	if _, err := data.AddWalletAddress("wallet_precision_1", 1); err != nil {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp1, err := CreateTransaction(newCreateTransactionRequest("order_precision_1", 1), nil)
+	resp1, err := CreateTransaction(newCreateTransactionRequest("order_precision_1", 1), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create first transaction: %v", err)
 	}
-	resp2, err := CreateTransaction(newCreateTransactionRequest("order_precision_2", 1), nil)
+	resp2, err := CreateTransaction(newCreateTransactionRequest("order_precision_2", 1), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create second transaction: %v", err)
 	}
@@ -313,11 +313,11 @@ func TestCreateTransactionStoresNormalizedMerchantAmount(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("wallet_normalized_1"); err != nil {
+	if _, err := data.AddWalletAddress("wallet_normalized_1", 1); err != nil {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp, err := CreateTransaction(newCreateTransactionRequest("order_normalized_1", 100.129), nil)
+	resp, err := CreateTransaction(newCreateTransactionRequest("order_normalized_1", 100.129), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create transaction: %v", err)
 	}
@@ -360,11 +360,11 @@ func TestCreateTransactionUsesRateAPIWhenForcedSettingIsNotPositive(t *testing.T
 	if err := data.SetSetting("rate", "rate.mode", config.RateModeAuto, "string"); err != nil {
 		t.Fatalf("set rate.mode: %v", err)
 	}
-	if _, err := data.AddWalletAddress("wallet_1"); err != nil {
+	if _, err := data.AddWalletAddress("wallet_1", 1); err != nil {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp, err := CreateTransaction(newCreateTransactionRequest("order_api_rate_1", 10), nil)
+	resp, err := CreateTransaction(newCreateTransactionRequest("order_api_rate_1", 10), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create transaction: %v", err)
 	}
@@ -389,10 +389,10 @@ func TestCreateTransactionUsesDefaultForcedRateWithoutRateAPI(t *testing.T) {
 	if err := data.SetSetting("rate", "rate.api_url", "", "string"); err != nil {
 		t.Fatalf("clear rate.api_url: %v", err)
 	}
-	if _, err := data.AddWalletAddress("wallet_default_rate_usdt"); err != nil {
+	if _, err := data.AddWalletAddress("wallet_default_rate_usdt", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkSolana, "SolDefaultRateAddress001"); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkSolana, "SolDefaultRateAddress001", 1); err != nil {
 		t.Fatalf("add solana wallet: %v", err)
 	}
 	if err := dao.Mdb.Create(&mdb.ChainToken{
@@ -405,7 +405,7 @@ func TestCreateTransactionUsesDefaultForcedRateWithoutRateAPI(t *testing.T) {
 		t.Fatalf("seed solana USDC token: %v", err)
 	}
 
-	usdtResp, err := CreateTransaction(newCreateTransactionRequest("order_default_rate_usdt_1", 10), nil)
+	usdtResp, err := CreateTransaction(newCreateTransactionRequest("order_default_rate_usdt_1", 10), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create USDT transaction: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestCreateTransactionUsesDefaultForcedRateWithoutRateAPI(t *testing.T) {
 	usdcReq := newCreateTransactionRequest("order_default_rate_usdc_1", 10)
 	usdcReq.Network = mdb.NetworkSolana
 	usdcReq.Token = "USDC"
-	usdcResp, err := CreateTransaction(usdcReq, nil)
+	usdcResp, err := CreateTransaction(usdcReq, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create USDC transaction: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestCreateTransactionFailsWhenRateAPIUnavailableAndForcedSettingIsNotPositi
 		t.Fatalf("set rate.mode: %v", err)
 	}
 
-	_, err := CreateTransaction(newCreateTransactionRequest("order_missing_rate_1", 10), nil)
+	_, err := CreateTransaction(newCreateTransactionRequest("order_missing_rate_1", 10), testOrderMerchant())
 	if err != constant.RateAmountErr {
 		t.Fatalf("create transaction error = %v, want %v", err, constant.RateAmountErr)
 	}
@@ -451,7 +451,7 @@ func TestCreateTransactionNormalizesEvmReceiveAddressToLowercase(t *testing.T) {
 	defer cleanup()
 
 	mixedAddress := "0xA1B2c3D4e5F60718293aBcDeF001122334455667"
-	if err := dao.Mdb.Create(&mdb.WalletAddress{
+	if err := dao.Mdb.Create(&mdb.WalletAddress{ApiKeyID: 1,
 		Network: mdb.NetworkEthereum,
 		Address: mixedAddress,
 		Status:  mdb.TokenStatusEnable,
@@ -462,7 +462,7 @@ func TestCreateTransactionNormalizesEvmReceiveAddressToLowercase(t *testing.T) {
 	req := newCreateTransactionRequest("order_evm_1", 1)
 	req.Network = mdb.NetworkEthereum
 
-	resp, err := CreateTransaction(req, nil)
+	resp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create transaction: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestCreateTransactionCreatesTonOrderAndRawLock(t *testing.T) {
 		t.Fatalf("set forced rate: %v", err)
 	}
 	addr := address.MustParseAddr("EQC6KV4zs8TJtSZapOrRFmqSkxzpq-oSCoxekQRKElf4nC1I")
-	wallet, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw())
+	wallet, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw(), 1)
 	if err != nil {
 		t.Fatalf("add ton wallet: %v", err)
 	}
@@ -506,7 +506,7 @@ func TestCreateTransactionCreatesTonOrderAndRawLock(t *testing.T) {
 	req.Network = mdb.NetworkTon
 	req.Token = "TON"
 
-	resp, err := CreateTransaction(req, nil)
+	resp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create TON transaction: %v", err)
 	}
@@ -540,14 +540,14 @@ func TestCreateTransactionCreatesTonOrderWithConfiguredPrecision(t *testing.T) {
 		t.Fatalf("set forced rate: %v", err)
 	}
 	addr := address.MustParseAddr("EQC6KV4zs8TJtSZapOrRFmqSkxzpq-oSCoxekQRKElf4nC1I")
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw()); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw(), 1); err != nil {
 		t.Fatalf("add ton wallet: %v", err)
 	}
 
 	req := newCreateTransactionRequest("order_ton_precision_1", 10)
 	req.Network = mdb.NetworkTon
 	req.Token = "TON"
-	resp, err := CreateTransaction(req, nil)
+	resp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create TON transaction: %v", err)
 	}
@@ -571,7 +571,7 @@ func TestCreateTransactionRejectsUnsupportedTonToken(t *testing.T) {
 	req.Network = mdb.NetworkTon
 	req.Token = "GRAM"
 
-	_, err := CreateTransaction(req, nil)
+	_, err := CreateTransaction(req, testOrderMerchant())
 	if err != constant.SupportedAssetNotFound {
 		t.Fatalf("create unsupported TON token error = %v, want %v", err, constant.SupportedAssetNotFound)
 	}
@@ -590,7 +590,7 @@ func TestCreateTransactionRejectsDisabledTonTokenBeforeRate(t *testing.T) {
 	req.Network = mdb.NetworkTon
 	req.Token = "TON"
 
-	_, err := CreateTransaction(req, nil)
+	_, err := CreateTransaction(req, testOrderMerchant())
 	if err != constant.SupportedAssetNotFound {
 		t.Fatalf("create disabled TON token error = %v, want %v", err, constant.SupportedAssetNotFound)
 	}
@@ -617,7 +617,7 @@ func TestCreateTransactionRejectsEnabledMisconfiguredAptosUSDT(t *testing.T) {
 	req.Network = mdb.NetworkAptos
 	req.Token = "USDT"
 
-	_, err := CreateTransaction(req, nil)
+	_, err := CreateTransaction(req, testOrderMerchant())
 	if err != constant.SupportedAssetNotFound {
 		t.Fatalf("create misconfigured Aptos USDT error = %v, want %v", err, constant.SupportedAssetNotFound)
 	}
@@ -660,7 +660,7 @@ func TestCreateTransactionSupportedTonTokenWithoutRateReturnsRateError(t *testin
 	req.Network = mdb.NetworkTon
 	req.Token = "TON"
 
-	_, err := CreateTransaction(req, nil)
+	_, err := CreateTransaction(req, testOrderMerchant())
 	if err != constant.RateAmountErr {
 		t.Fatalf("create TON without rate error = %v, want %v", err, constant.RateAmountErr)
 	}
@@ -673,18 +673,18 @@ func TestSwitchNetworkCreatesTonSubOrderAndRawLock(t *testing.T) {
 	if err := data.SetSetting("rate", "rate.forced_rate_list", `{"cny":{"usdt":0.1,"ton":0.5}}`, "json"); err != nil {
 		t.Fatalf("set forced rate: %v", err)
 	}
-	if _, err := data.AddWalletAddress("TTestTronAddress001"); err != nil {
+	if _, err := data.AddWalletAddress("TTestTronAddress001", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
 	addr := address.MustParseAddr("EQC6KV4zs8TJtSZapOrRFmqSkxzpq-oSCoxekQRKElf4nC1I")
-	wallet, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw())
+	wallet, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw(), 1)
 	if err != nil {
 		t.Fatalf("add ton wallet: %v", err)
 	}
 
 	parentReq := newCreateTransactionRequest("order_switch_ton_1", 10)
 	parentReq.Network = mdb.NetworkTron
-	parentResp, err := CreateTransaction(parentReq, nil)
+	parentResp, err := CreateTransaction(parentReq, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create parent transaction: %v", err)
 	}
@@ -722,14 +722,14 @@ func TestSwitchNetworkCompletesWaitSelectPlaceholderInPlace(t *testing.T) {
 	if err := data.SetSetting("rate", "rate.forced_rate_list", `{"cny":{"usdt":0.1}}`, "json"); err != nil {
 		t.Fatalf("set forced rate: %v", err)
 	}
-	if _, err := data.AddWalletAddress("TWaitSelectAddress001"); err != nil {
+	if _, err := data.AddWalletAddress("TWaitSelectAddress001", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
 
 	req := newCreateTransactionRequest("order_wait_select_switch_1", 10)
 	req.Token = ""
 	req.Network = ""
-	parentResp, err := CreateTransaction(req, nil)
+	parentResp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create placeholder: %v", err)
 	}
@@ -800,20 +800,20 @@ func TestSwitchNetworkAfterWaitSelectCompletionUsesExistingSubOrderFlow(t *testi
 	if err := data.SetSetting("rate", "rate.forced_rate_list", `{"cny":{"usdt":0.1}}`, "json"); err != nil {
 		t.Fatalf("set forced rate: %v", err)
 	}
-	if _, err := data.AddWalletAddress("TWaitSelectAddress002"); err != nil {
+	if _, err := data.AddWalletAddress("TWaitSelectAddress002", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455668"); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455668", 1); err != nil {
 		t.Fatalf("add ethereum wallet: %v", err)
 	}
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkBsc, "0xB1B2c3D4e5F60718293aBcDeF001122334455668"); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkBsc, "0xB1B2c3D4e5F60718293aBcDeF001122334455668", 1); err != nil {
 		t.Fatalf("add bsc wallet: %v", err)
 	}
 
 	req := newCreateTransactionRequest("order_wait_select_reswitch_1", 10)
 	req.Token = ""
 	req.Network = ""
-	parentResp, err := CreateTransaction(req, nil)
+	parentResp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create placeholder: %v", err)
 	}
@@ -878,10 +878,10 @@ func TestSwitchNetworkRejectsUnsupportedTonToken(t *testing.T) {
 	if err := data.SetSetting("rate", "rate.forced_rate_list", `{"cny":{"usdt":0.1}}`, "json"); err != nil {
 		t.Fatalf("set forced rate: %v", err)
 	}
-	if _, err := data.AddWalletAddress("TTestTronAddress002"); err != nil {
+	if _, err := data.AddWalletAddress("TTestTronAddress002", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
-	parentResp, err := CreateTransaction(newCreateTransactionRequest("order_switch_gram_1", 10), nil)
+	parentResp, err := CreateTransaction(newCreateTransactionRequest("order_switch_gram_1", 10), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create parent transaction: %v", err)
 	}
@@ -904,13 +904,13 @@ func TestTryProcessTonTransferMarksOrderPaidAndReleasesRawLock(t *testing.T) {
 		t.Fatalf("set forced rate: %v", err)
 	}
 	addr := address.MustParseAddr("EQC6KV4zs8TJtSZapOrRFmqSkxzpq-oSCoxekQRKElf4nC1I")
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw()); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw(), 1); err != nil {
 		t.Fatalf("add ton wallet: %v", err)
 	}
 	req := newCreateTransactionRequest("order_ton_process_1", 10)
 	req.Network = mdb.NetworkTon
 	req.Token = "TON"
-	resp, err := CreateTransaction(req, nil)
+	resp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create TON transaction: %v", err)
 	}
@@ -954,13 +954,13 @@ func TestTryProcessTonJettonTransferMarksUSDTOrderPaid(t *testing.T) {
 		t.Fatalf("set forced rate: %v", err)
 	}
 	addr := address.MustParseAddr("EQC6KV4zs8TJtSZapOrRFmqSkxzpq-oSCoxekQRKElf4nC1I")
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw()); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw(), 1); err != nil {
 		t.Fatalf("add ton wallet: %v", err)
 	}
 	req := newCreateTransactionRequest("order_ton_usdt_process_1", 10)
 	req.Network = mdb.NetworkTon
 	req.Token = "USDT"
-	resp, err := CreateTransaction(req, nil)
+	resp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create TON USDT transaction: %v", err)
 	}
@@ -1004,13 +1004,13 @@ func TestTryProcessTonTransferSkipsTransfersBeforeOrderCreation(t *testing.T) {
 		t.Fatalf("set forced rate: %v", err)
 	}
 	addr := address.MustParseAddr("EQC6KV4zs8TJtSZapOrRFmqSkxzpq-oSCoxekQRKElf4nC1I")
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw()); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw(), 1); err != nil {
 		t.Fatalf("add ton wallet: %v", err)
 	}
 	req := newCreateTransactionRequest("order_ton_old_transfer_1", 10)
 	req.Network = mdb.NetworkTon
 	req.Token = "TON"
-	resp, err := CreateTransaction(req, nil)
+	resp, err := CreateTransaction(req, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create TON transaction: %v", err)
 	}
@@ -1049,17 +1049,17 @@ func TestTryProcessTonSubOrderPaysParentAndReleasesLocks(t *testing.T) {
 	if err := data.SetSetting("rate", "rate.forced_rate_list", `{"cny":{"usdt":0.1,"ton":0.5}}`, "json"); err != nil {
 		t.Fatalf("set forced rate: %v", err)
 	}
-	if _, err := data.AddWalletAddress("TTestTronAddressForTonSub"); err != nil {
+	if _, err := data.AddWalletAddress("TTestTronAddressForTonSub", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
 	addr := address.MustParseAddr("EQC6KV4zs8TJtSZapOrRFmqSkxzpq-oSCoxekQRKElf4nC1I")
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw()); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, addr.StringRaw(), 1); err != nil {
 		t.Fatalf("add ton wallet: %v", err)
 	}
 
 	parentReq := newCreateTransactionRequest("order_ton_sub_parent_1", 10)
 	parentReq.Network = mdb.NetworkTron
-	parentResp, err := CreateTransaction(parentReq, nil)
+	parentResp, err := CreateTransaction(parentReq, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create parent order: %v", err)
 	}
@@ -1117,11 +1117,11 @@ func TestOrderProcessingMarksPaidAndReleasesLock(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("wallet_1"); err != nil {
+	if _, err := data.AddWalletAddress("wallet_1", 1); err != nil {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp, err := CreateTransaction(newCreateTransactionRequest("order_1", 1), nil)
+	resp, err := CreateTransaction(newCreateTransactionRequest("order_1", 1), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create transaction: %v", err)
 	}
@@ -1165,11 +1165,11 @@ func TestOrderProcessingRejectsDuplicateBlockForSameOrder(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("wallet_1"); err != nil {
+	if _, err := data.AddWalletAddress("wallet_1", 1); err != nil {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp, err := CreateTransaction(newCreateTransactionRequest("order_1", 1), nil)
+	resp, err := CreateTransaction(newCreateTransactionRequest("order_1", 1), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create transaction: %v", err)
 	}
@@ -1207,11 +1207,11 @@ func TestOrderProcessingDoesNotReviveExpiredOrder(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("wallet_1"); err != nil {
+	if _, err := data.AddWalletAddress("wallet_1", 1); err != nil {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp, err := CreateTransaction(newCreateTransactionRequest("order_1", 1), nil)
+	resp, err := CreateTransaction(newCreateTransactionRequest("order_1", 1), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create transaction: %v", err)
 	}
@@ -1250,18 +1250,18 @@ func TestOrderProcessingOnlyOneOrderClaimsABlockTransaction(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("wallet_1"); err != nil {
+	if _, err := data.AddWalletAddress("wallet_1", 1); err != nil {
 		t.Fatalf("add wallet: %v", err)
 	}
-	if _, err := data.AddWalletAddress("wallet_2"); err != nil {
+	if _, err := data.AddWalletAddress("wallet_2", 1); err != nil {
 		t.Fatalf("add wallet: %v", err)
 	}
 
-	resp1, err := CreateTransaction(newCreateTransactionRequest("order_1", 1), nil)
+	resp1, err := CreateTransaction(newCreateTransactionRequest("order_1", 1), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create first transaction: %v", err)
 	}
-	resp2, err := CreateTransaction(newCreateTransactionRequest("order_2", 2), nil)
+	resp2, err := CreateTransaction(newCreateTransactionRequest("order_2", 2), testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create second transaction: %v", err)
 	}
@@ -1350,16 +1350,16 @@ func TestOrderProcessingSubOrderReturnsErrorWhenParentNotWaitPay(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("TTestTronAddress001"); err != nil {
+	if _, err := data.AddWalletAddress("TTestTronAddress001", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455667"); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455667", 1); err != nil {
 		t.Fatalf("add ethereum wallet: %v", err)
 	}
 
 	parentReq := newCreateTransactionRequest("order_parent_for_sub", 1)
 	parentReq.Network = mdb.NetworkTron
-	parentResp, err := CreateTransaction(parentReq, nil)
+	parentResp, err := CreateTransaction(parentReq, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create parent order: %v", err)
 	}
@@ -1396,16 +1396,16 @@ func TestOrderProcessingSubOrderReturnsErrorWhenParentMissing(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("TTestTronAddress001"); err != nil {
+	if _, err := data.AddWalletAddress("TTestTronAddress001", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455667"); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455667", 1); err != nil {
 		t.Fatalf("add ethereum wallet: %v", err)
 	}
 
 	parentReq := newCreateTransactionRequest("order_parent_missing", 1)
 	parentReq.Network = mdb.NetworkTron
-	parentResp, err := CreateTransaction(parentReq, nil)
+	parentResp, err := CreateTransaction(parentReq, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create parent order: %v", err)
 	}
@@ -1445,10 +1445,10 @@ func TestOrderProcessingSubOrderPaidParentKeepsOwnFields(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("TTestTronAddress001"); err != nil {
+	if _, err := data.AddWalletAddress("TTestTronAddress001", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455667"); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455667", 1); err != nil {
 		t.Fatalf("add ethereum wallet: %v", err)
 	}
 
@@ -1456,7 +1456,7 @@ func TestOrderProcessingSubOrderPaidParentKeepsOwnFields(t *testing.T) {
 	parentReq.Network = mdb.NetworkTron
 	parentReq.PaymentType = mdb.PaymentTypeEpay
 	parentReq.EpayType = "usdt.tron"
-	parentResp, err := CreateTransaction(parentReq, nil)
+	parentResp, err := CreateTransaction(parentReq, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create parent order: %v", err)
 	}
@@ -1541,13 +1541,13 @@ func TestOrderProcessingParentDirectPayExpiresOkPayProviderOrder(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("TTestTronAddress001"); err != nil {
+	if _, err := data.AddWalletAddress("TTestTronAddress001", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
 
 	parentReq := newCreateTransactionRequest("order_parent_direct_okpay_expire", 1)
 	parentReq.Network = mdb.NetworkTron
-	parentResp, err := CreateTransaction(parentReq, nil)
+	parentResp, err := CreateTransaction(parentReq, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create parent order: %v", err)
 	}
@@ -1619,19 +1619,19 @@ func TestOrderProcessingSubOrderExpiresSiblingsAndReleasesLocks(t *testing.T) {
 	cleanup := testutil.SetupTestDatabases(t)
 	defer cleanup()
 
-	if _, err := data.AddWalletAddress("TTestTronAddress001"); err != nil {
+	if _, err := data.AddWalletAddress("TTestTronAddress001", 1); err != nil {
 		t.Fatalf("add tron wallet: %v", err)
 	}
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455667"); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkEthereum, "0xA1B2c3D4e5F60718293aBcDeF001122334455667", 1); err != nil {
 		t.Fatalf("add ethereum wallet: %v", err)
 	}
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkBsc, "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkBsc, "0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", 1); err != nil {
 		t.Fatalf("add bsc wallet: %v", err)
 	}
 
 	parentReq := newCreateTransactionRequest("order_sib_expiry_test", 1)
 	parentReq.Network = mdb.NetworkTron
-	parentResp, err := CreateTransaction(parentReq, nil)
+	parentResp, err := CreateTransaction(parentReq, testOrderMerchant())
 	if err != nil {
 		t.Fatalf("create parent order: %v", err)
 	}
@@ -1722,3 +1722,5 @@ func TestOrderProcessingSubOrderExpiresSiblingsAndReleasesLocks(t *testing.T) {
 		t.Fatalf("eth sub-order runtime lock still held: trade_id=%s", ethLock)
 	}
 }
+
+func testOrderMerchant() *mdb.ApiKey { return &mdb.ApiKey{BaseModel: mdb.BaseModel{ID: 1}} }

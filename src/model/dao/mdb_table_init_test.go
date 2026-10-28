@@ -2,6 +2,7 @@ package dao
 
 import (
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -11,6 +12,90 @@ import (
 	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
+
+func TestSingleColumnUniqueIndexNames(t *testing.T) {
+	db := setupSeedTableTestDB(t)
+	Mdb = db
+
+	tests := []struct {
+		model interface{}
+		want  []string
+	}{
+		{&mdb.Orders{}, []string{"orders_order_id_uindex", "orders_trade_id_uindex"}},
+		{&mdb.ApiKey{}, []string{"api_keys_pid_uindex"}},
+		{&mdb.WalletAddress{}, nil},
+		{&mdb.ChainToken{}, nil},
+	}
+	for _, tt := range tests {
+		got, err := singleColumnUniqueIndexNames(tt.model)
+		if err != nil {
+			t.Fatalf("singleColumnUniqueIndexNames(%T): %v", tt.model, err)
+		}
+		if !reflect.DeepEqual(got, tt.want) {
+			t.Fatalf("singleColumnUniqueIndexNames(%T) = %v, want %v", tt.model, got, tt.want)
+		}
+	}
+}
+
+func TestMigrateLegacyBSCNetwork(t *testing.T) {
+	db := setupSeedTableTestDB(t,
+		&mdb.Orders{}, &mdb.WalletAddress{}, &mdb.Chain{},
+		&mdb.ChainToken{}, &mdb.RpcNode{},
+	)
+	Mdb = db
+	if err := db.Create(&mdb.Chain{Network: "bsc", DisplayName: "Legacy BSC"}).Error; err != nil {
+		t.Fatalf("create legacy chain: %v", err)
+	}
+	if err := db.Create(&mdb.Orders{TradeId: "legacy-trade", OrderId: "legacy-order", Network: "bsc"}).Error; err != nil {
+		t.Fatalf("create legacy order: %v", err)
+	}
+	if err := db.Create(&mdb.WalletAddress{Network: "bsc", Address: "0xlegacy"}).Error; err != nil {
+		t.Fatalf("create legacy wallet: %v", err)
+	}
+	if err := db.Create(&mdb.ChainToken{Network: "bsc", Symbol: "USDT"}).Error; err != nil {
+		t.Fatalf("create legacy token: %v", err)
+	}
+	if err := db.Create(&mdb.RpcNode{Network: "bsc", Url: "https://legacy.example"}).Error; err != nil {
+		t.Fatalf("create legacy rpc: %v", err)
+	}
+
+	if err := migrateLegacyBSCNetwork(); err != nil {
+		t.Fatalf("migrate legacy BSC: %v", err)
+	}
+	for table, model := range map[string]interface{}{
+		"orders": &mdb.Orders{}, "wallet_address": &mdb.WalletAddress{},
+		"chains": &mdb.Chain{}, "chain_tokens": &mdb.ChainToken{}, "rpc_nodes": &mdb.RpcNode{},
+	} {
+		var legacy int64
+		if err := db.Model(model).Where("network = ?", "bsc").Count(&legacy).Error; err != nil {
+			t.Fatalf("count %s: %v", table, err)
+		}
+		if legacy != 0 {
+			t.Fatalf("%s still has %d legacy rows", table, legacy)
+		}
+	}
+	var migrated int64
+	if err := db.Model(&mdb.Orders{}).Where("network = ?", mdb.NetworkBsc).Count(&migrated).Error; err != nil || migrated != 1 {
+		t.Fatalf("migrated order count = %d, err=%v", migrated, err)
+	}
+}
+
+func TestMigrateLegacyBSCNetworkSkipsWhenTargetChainExists(t *testing.T) {
+	db := setupSeedTableTestDB(t, &mdb.Chain{}, &mdb.Orders{}, &mdb.WalletAddress{}, &mdb.ChainToken{}, &mdb.RpcNode{})
+	Mdb = db
+	for _, network := range []string{"bsc", mdb.NetworkBsc} {
+		if err := db.Create(&mdb.Chain{Network: network}).Error; err != nil {
+			t.Fatalf("create %s chain: %v", network, err)
+		}
+	}
+	if err := migrateLegacyBSCNetwork(); err != nil {
+		t.Fatalf("migration should skip safely: %v", err)
+	}
+	var legacy int64
+	if err := db.Model(&mdb.Chain{}).Where("network = ?", "bsc").Count(&legacy).Error; err != nil || legacy != 1 {
+		t.Fatalf("legacy chain count = %d, err=%v", legacy, err)
+	}
+}
 
 func TestDefaultRpcNodesIncludesManualVerifyEpusdtEvmNodes(t *testing.T) {
 	want := map[string]string{

@@ -10,8 +10,8 @@ import (
 )
 
 // AddWalletAddress 创建钱包 (默认 tron 网络，用于 Telegram 添加)
-func AddWalletAddress(address string) (*mdb.WalletAddress, error) {
-	return AddWalletAddressWithNetwork(mdb.NetworkTron, address)
+func AddWalletAddress(address string, merchant ...uint64) (*mdb.WalletAddress, error) {
+	return AddWalletAddressWithNetwork(mdb.NetworkTron, address, merchant...)
 }
 
 // isEVMNetwork 判断是否是 EVM 网络
@@ -48,7 +48,10 @@ func normalizeWalletAddressByNetworkE(network, address string) (string, error) {
 }
 
 // AddWalletAddressWithNetwork 创建指定网络的钱包地址
-func AddWalletAddressWithNetwork(network, address string) (*mdb.WalletAddress, error) {
+func AddWalletAddressWithNetwork(network, address string, merchant ...uint64) (*mdb.WalletAddress, error) {
+	if len(merchant) > 0 {
+		return AddMerchantWallet(network, address, "", mdb.WalletSourceManual, merchant[0])
+	}
 	network = normalizeWalletNetwork(network)
 	var err error
 	address, err = normalizeWalletAddressByNetworkE(network, address)
@@ -121,6 +124,8 @@ func GetWalletAddressById(id uint64) (*mdb.WalletAddress, error) {
 
 // DeleteWalletAddressById 通过id删除钱包
 func DeleteWalletAddressById(id uint64) error {
+	merchantWalletMu.Lock()
+	defer merchantWalletMu.Unlock()
 	err := dao.Mdb.Where("id = ?", id).Delete(&mdb.WalletAddress{}).Error
 	return err
 }
@@ -188,6 +193,8 @@ func GetAllWalletAddressByNetwork(network string) ([]mdb.WalletAddress, error) {
 
 // ChangeWalletAddressStatus 启用禁用钱包
 func ChangeWalletAddressStatus(id uint64, status int) error {
+	merchantWalletMu.Lock()
+	defer merchantWalletMu.Unlock()
 	err := dao.Mdb.Model(&mdb.WalletAddress{}).Where("id = ?", id).Update("status", status).Error
 	return err
 }

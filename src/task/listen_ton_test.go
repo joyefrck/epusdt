@@ -510,7 +510,7 @@ func TestProcessTonShardBlockMatchesJettonUSDTOrder(t *testing.T) {
 		t.Fatalf("set forced rate: %v", err)
 	}
 	receive := address.MustParseAddr("EQC6KV4zs8TJtSZapOrRFmqSkxzpq-oSCoxekQRKElf4nC1I")
-	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, receive.StringRaw()); err != nil {
+	if _, err := data.AddWalletAddressWithNetwork(mdb.NetworkTon, receive.StringRaw(), 1); err != nil {
 		t.Fatalf("add ton wallet: %v", err)
 	}
 	resp, err := service.CreateTransaction(&request.CreateTransactionRequest{
@@ -520,7 +520,7 @@ func TestProcessTonShardBlockMatchesJettonUSDTOrder(t *testing.T) {
 		Network:   mdb.NetworkTon,
 		Amount:    10,
 		NotifyUrl: "https://93.184.216.34/callback",
-	}, nil)
+	}, &mdb.ApiKey{BaseModel: mdb.BaseModel{ID: 1}})
 	if err != nil {
 		t.Fatalf("create TON USDT order: %v", err)
 	}

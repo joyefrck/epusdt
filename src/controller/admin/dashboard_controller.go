@@ -120,6 +120,7 @@ type SettingsUpsertResult struct {
 // @Tags         Admin Dashboard
 // @Security     AdminJWT
 // @Produce      json
+// @Param        api_key_id query int false "Merchant Key ID (0=unassigned, omitted=all)"
 // @Param        range    query string false "Time range: today, 7d, 30d, custom" default(today)
 // @Param        start_at query int    false "Start time (Unix seconds, for custom range)"
 // @Param        end_at   query int    false "End time (Unix seconds, for custom range)"
@@ -127,22 +128,26 @@ type SettingsUpsertResult struct {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/dashboard/overview [get]
 func (c *BaseAdminController) Overview(ctx echo.Context) error {
+	merchant, filterErr := parseMerchantFilter(ctx)
+	if filterErr != nil {
+		return c.FailJson(ctx, filterErr)
+	}
 	start, end := parseRange(ctx)
 
 	now := time.Now()
 	sevenDaysAgo := startOfDay(now).AddDate(0, 0, -6)
 
-	totalActual, _ := data.SumPaidActualAmount()
+	totalActual, _ := data.SumPaidActualAmount(merchant)
 
-	orderCount, successCount, volume, _ := data.PaidStatsInRange(start, end)
+	orderCount, successCount, volume, _ := data.PaidStatsInRange(start, end, merchant)
 	var successRate float64
 	if orderCount > 0 {
 		successRate = float64(successCount) / float64(orderCount)
 	}
 
-	_, _, sevenDayActual, _ := data.PaidStatsInRange(sevenDaysAgo, now)
+	_, _, sevenDayActual, _ := data.PaidStatsInRange(sevenDaysAgo, now, merchant)
 
-	activeAddr, _ := data.ActiveAddressCountInRange(start, end)
+	activeAddr, _ := data.ActiveAddressCountInRange(start, end, merchant)
 	onlineChains, _ := data.CountEnabledChains()
 
 	return c.SucJson(ctx, map[string]interface{}{
@@ -172,6 +177,7 @@ func isHourlyRange(start, end time.Time) bool {
 // @Tags         Admin Dashboard
 // @Security     AdminJWT
 // @Produce      json
+// @Param        api_key_id query int false "Merchant Key ID (0=unassigned, omitted=all)"
 // @Param        range query string false "Time range: today, 7d, 30d, custom" default(today)
 // @Param        start_at query int false "Start time (Unix seconds, for custom range)"
 // @Param        end_at query int false "End time (Unix seconds, for custom range)"
@@ -180,6 +186,10 @@ func isHourlyRange(start, end time.Time) bool {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/dashboard/asset-trend [get]
 func (c *BaseAdminController) AssetTrend(ctx echo.Context) error {
+	merchant, filterErr := parseMerchantFilter(ctx)
+	if filterErr != nil {
+		return c.FailJson(ctx, filterErr)
+	}
 	start, end := parseRange(ctx)
 	groupBy := strings.ToLower(strings.TrimSpace(ctx.QueryParam("group_by")))
 	hourly := isHourlyRange(start, end)
@@ -187,9 +197,9 @@ func (c *BaseAdminController) AssetTrend(ctx echo.Context) error {
 		var rows interface{}
 		var err error
 		if hourly {
-			rows, err = data.HourlyAssetByAddress(start, end)
+			rows, err = data.HourlyAssetByAddress(start, end, merchant)
 		} else {
-			rows, err = data.DailyAssetByAddress(start, end)
+			rows, err = data.DailyAssetByAddress(start, end, merchant)
 		}
 		if err != nil {
 			return c.FailJson(ctx, err)
@@ -199,9 +209,9 @@ func (c *BaseAdminController) AssetTrend(ctx echo.Context) error {
 	var rows interface{}
 	var err error
 	if hourly {
-		rows, err = data.HourlyOrderStats(start, end)
+		rows, err = data.HourlyOrderStats(start, end, merchant)
 	} else {
-		rows, err = data.DailyOrderStats(start, end)
+		rows, err = data.DailyOrderStats(start, end, merchant)
 	}
 	if err != nil {
 		return c.FailJson(ctx, err)
@@ -219,6 +229,7 @@ func (c *BaseAdminController) AssetTrend(ctx echo.Context) error {
 // @Tags         Admin Dashboard
 // @Security     AdminJWT
 // @Produce      json
+// @Param        api_key_id query int false "Merchant Key ID (0=unassigned, omitted=all)"
 // @Param        range query string false "Time range: today, 7d, 30d, custom" default(today)
 // @Param        start_at query int false "Start time (Unix seconds, for custom range)"
 // @Param        end_at query int false "End time (Unix seconds, for custom range)"
@@ -226,13 +237,17 @@ func (c *BaseAdminController) AssetTrend(ctx echo.Context) error {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/dashboard/revenue-trend [get]
 func (c *BaseAdminController) RevenueTrend(ctx echo.Context) error {
+	merchant, filterErr := parseMerchantFilter(ctx)
+	if filterErr != nil {
+		return c.FailJson(ctx, filterErr)
+	}
 	start, end := parseRange(ctx)
 	var rows interface{}
 	var err error
 	if isHourlyRange(start, end) {
-		rows, err = data.HourlyOrderStats(start, end)
+		rows, err = data.HourlyOrderStats(start, end, merchant)
 	} else {
-		rows, err = data.DailyOrderStats(start, end)
+		rows, err = data.DailyOrderStats(start, end, merchant)
 	}
 	if err != nil {
 		return c.FailJson(ctx, err)
@@ -248,6 +263,7 @@ func (c *BaseAdminController) RevenueTrend(ctx echo.Context) error {
 // @Tags         Admin Dashboard
 // @Security     AdminJWT
 // @Produce      json
+// @Param        api_key_id query int false "Merchant Key ID (0=unassigned, omitted=all)"
 // @Param        range query string false "Time range: today, 7d, 30d, custom" default(today)
 // @Param        start_at query int false "Start time (Unix seconds, for custom range)"
 // @Param        end_at query int false "End time (Unix seconds, for custom range)"
@@ -255,13 +271,17 @@ func (c *BaseAdminController) RevenueTrend(ctx echo.Context) error {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/dashboard/order-stats [get]
 func (c *BaseAdminController) OrderStats(ctx echo.Context) error {
+	merchant, filterErr := parseMerchantFilter(ctx)
+	if filterErr != nil {
+		return c.FailJson(ctx, filterErr)
+	}
 	start, end := parseRange(ctx)
-	total, success, _, err := data.PaidStatsInRange(start, end)
+	total, success, _, err := data.PaidStatsInRange(start, end, merchant)
 	if err != nil {
 		return c.FailJson(ctx, err)
 	}
-	avg, _ := data.AveragePaymentDurationSeconds(start, end)
-	expired, _ := data.CountExpiredInRange(start, end)
+	avg, _ := data.AveragePaymentDurationSeconds(start, end, merchant)
+	expired, _ := data.CountExpiredInRange(start, end, merchant)
 
 	var rate float64
 	if total > 0 {
@@ -455,13 +475,17 @@ func rpcStatsStatus(enabled bool, successCount, failureCount int64) string {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/dashboard/recent-orders [get]
 func (c *BaseAdminController) RecentOrders(ctx echo.Context) error {
+	merchant, filterErr := parseMerchantFilter(ctx)
+	if filterErr != nil {
+		return c.FailJson(ctx, filterErr)
+	}
 	limit := 20
 	if s := ctx.QueryParam("limit"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil {
 			limit = n
 		}
 	}
-	rows, err := data.RecentOrders(limit)
+	rows, err := data.RecentOrders(limit, merchant)
 	if err != nil {
 		return c.FailJson(ctx, err)
 	}

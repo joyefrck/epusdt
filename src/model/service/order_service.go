@@ -146,6 +146,8 @@ func ApplyConfiguredPaymentDefaults(req *request.CreateTransactionRequest) {
 
 // CreateTransaction creates a new payment order.
 func CreateTransaction(req *request.CreateTransactionRequest, apiKey *mdb.ApiKey) (*response.CreateTransactionResponse, error) {
+	releaseWalletOwnership := data.ProtectWalletAllocation()
+	defer releaseWalletOwnership()
 	ApplyConfiguredPaymentDefaults(req)
 	token := strings.ToUpper(strings.TrimSpace(req.Token))
 	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
@@ -223,7 +225,7 @@ func CreateTransaction(req *request.CreateTransactionRequest, apiKey *mdb.ApiKey
 		return nil, constant.PayAmountErr
 	}
 
-	walletAddress, err := data.GetAvailableWalletAddressByNetwork(network)
+	walletAddress, err := data.GetMerchantWalletAddresses(network, apiKeyID(apiKey))
 	if err != nil {
 		return nil, err
 	}
@@ -599,6 +601,8 @@ func hasTransactionLock(order *mdb.Orders) bool {
 // an existing sub-order for a different payment target once the root order is
 // already concrete. Both root and child trade IDs are accepted as input.
 func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounterResponse, error) {
+	releaseWalletOwnership := data.ProtectWalletAllocation()
+	defer releaseWalletOwnership()
 	gCreateTransactionLock.Lock()
 	defer gCreateTransactionLock.Unlock()
 
@@ -677,7 +681,7 @@ func SwitchNetwork(req *request.SwitchNetworkRequest) (*response.CheckoutCounter
 	}
 
 	// 6. Find and lock wallet
-	walletAddress, err := data.GetAvailableWalletAddressByNetwork(network)
+	walletAddress, err := data.GetMerchantWalletAddresses(network, parent.ApiKeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -754,7 +758,7 @@ func completeWaitSelectOrder(parent *mdb.Orders, token string, network string) (
 		return nil, constant.PayAmountErr
 	}
 
-	walletAddress, err := data.GetAvailableWalletAddressByNetwork(network)
+	walletAddress, err := data.GetMerchantWalletAddresses(network, parent.ApiKeyID)
 	if err != nil {
 		return nil, err
 	}

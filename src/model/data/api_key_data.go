@@ -33,9 +33,13 @@ func GetApiKeyByID(id uint64) (*mdb.ApiKey, error) {
 }
 
 // ListApiKeys returns all rows ordered by ID descending.
-func ListApiKeys() ([]mdb.ApiKey, error) {
+func ListApiKeys(includeDeleted ...bool) ([]mdb.ApiKey, error) {
 	var rows []mdb.ApiKey
-	err := dao.Mdb.Model(&mdb.ApiKey{}).Order("id DESC").Find(&rows).Error
+	query := dao.Mdb.Model(&mdb.ApiKey{})
+	if len(includeDeleted) > 0 && includeDeleted[0] {
+		query = query.Unscoped()
+	}
+	err := query.Order("id DESC").Find(&rows).Error
 	return rows, err
 }
 
@@ -46,6 +50,8 @@ func CreateApiKey(row *mdb.ApiKey) error {
 
 // UpdateApiKeyFields updates a whitelist of mutable fields on a row.
 func UpdateApiKeyFields(id uint64, fields map[string]interface{}) error {
+	merchantWalletMu.Lock()
+	defer merchantWalletMu.Unlock()
 	if len(fields) == 0 {
 		return nil
 	}
@@ -54,6 +60,8 @@ func UpdateApiKeyFields(id uint64, fields map[string]interface{}) error {
 
 // DeleteApiKeyByID removes (soft-deletes) a row.
 func DeleteApiKeyByID(id uint64) error {
+	merchantWalletMu.Lock()
+	defer merchantWalletMu.Unlock()
 	return dao.Mdb.Where("id = ?", id).Delete(&mdb.ApiKey{}).Error
 }
 

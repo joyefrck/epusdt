@@ -22,8 +22,9 @@ const (
 )
 
 type WalletAddress struct {
-	Network string `gorm:"column:network;uniqueIndex:wallet_address_network_address_uindex" json:"network" example:"tron"`
-	Address string `gorm:"column:address;uniqueIndex:wallet_address_network_address_uindex" json:"address" example:"TTestTronAddress001"`
+	ApiKeyID uint64 `gorm:"column:api_key_id;default:0;index:wallet_address_api_key_id_index" json:"api_key_id"`
+	Network  string `gorm:"column:network;size:32;uniqueIndex:wallet_address_network_address_uindex" json:"network" example:"tron"`
+	Address  string `gorm:"column:address;size:128;uniqueIndex:wallet_address_network_address_uindex" json:"address" example:"TTestTronAddress001"`
 	// 状态 1=启用 2=禁用
 	Status int64  `gorm:"column:status;default:1" json:"status" enums:"1,2" example:"1"`
 	Remark string `gorm:"column:remark;size:255" json:"remark" example:"主钱包"`

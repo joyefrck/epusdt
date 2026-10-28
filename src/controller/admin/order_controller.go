@@ -45,6 +45,7 @@ type OrderWithSubListResponse struct {
 // @Tags         Admin Orders
 // @Security     AdminJWT
 // @Produce      json
+// @Param        api_key_id query int false "Merchant Key ID (0=unassigned, omitted=all)"
 // @Param        network query string false "Network filter"
 // @Param        token query string false "Token filter"
 // @Param        address query string false "Receive address filter"
@@ -58,7 +59,10 @@ type OrderWithSubListResponse struct {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/orders [get]
 func (c *BaseAdminController) ListOrders(ctx echo.Context) error {
-	f := parseOrderFilter(ctx)
+	f, err := parseOrderFilter(ctx)
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
 	rows, total, err := data.ListOrders(f)
 	if err != nil {
 		return c.FailJson(ctx, err)
@@ -230,6 +234,7 @@ func (c *BaseAdminController) ResendCallback(ctx echo.Context) error {
 // @Tags         Admin Orders
 // @Security     AdminJWT
 // @Produce      text/csv
+// @Param        api_key_id query int false "Merchant Key ID (0=unassigned, omitted=all)"
 // @Param        network query string false "Network filter"
 // @Param        token query string false "Token filter"
 // @Param        address query string false "Receive address filter"
@@ -241,7 +246,10 @@ func (c *BaseAdminController) ResendCallback(ctx echo.Context) error {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/orders/export [get]
 func (c *BaseAdminController) ExportOrders(ctx echo.Context) error {
-	f := parseOrderFilter(ctx)
+	f, err := parseOrderFilter(ctx)
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
 	f.Page = 1
 	f.PageSize = 10000
 	rows, _, err := data.ListOrders(f)
@@ -276,12 +284,17 @@ func (c *BaseAdminController) ExportOrders(ctx echo.Context) error {
 
 // parseOrderFilter extracts filter + pagination values from the query
 // string. Time params are Unix seconds.
-func parseOrderFilter(ctx echo.Context) data.OrderListFilter {
+func parseOrderFilter(ctx echo.Context) (data.OrderListFilter, error) {
+	merchant, err := parseMerchantFilter(ctx)
+	if err != nil {
+		return data.OrderListFilter{}, err
+	}
 	f := data.OrderListFilter{
-		Network: strings.ToLower(strings.TrimSpace(ctx.QueryParam("network"))),
-		Token:   strings.ToUpper(strings.TrimSpace(ctx.QueryParam("token"))),
-		Address: strings.TrimSpace(ctx.QueryParam("address")),
-		Keyword: strings.TrimSpace(ctx.QueryParam("keyword")),
+		ApiKeyID: merchant,
+		Network:  strings.ToLower(strings.TrimSpace(ctx.QueryParam("network"))),
+		Token:    strings.ToUpper(strings.TrimSpace(ctx.QueryParam("token"))),
+		Address:  strings.TrimSpace(ctx.QueryParam("address")),
+		Keyword:  strings.TrimSpace(ctx.QueryParam("keyword")),
 	}
 	if s := ctx.QueryParam("status"); s != "" {
 		if n, err := strconv.Atoi(s); err == nil {
@@ -316,7 +329,7 @@ func parseOrderFilter(ctx echo.Context) data.OrderListFilter {
 	if f.PageSize < 1 {
 		f.PageSize = 20
 	}
-	return f
+	return f, nil
 }
 
 // ListOrdersWithSub returns the same paginated order list as ListOrders but
@@ -326,6 +339,7 @@ func parseOrderFilter(ctx echo.Context) data.OrderListFilter {
 // @Tags         Admin Orders
 // @Security     AdminJWT
 // @Produce      json
+// @Param        api_key_id query int false "Merchant Key ID (0=unassigned, omitted=all)"
 // @Param        network query string false "Network filter"
 // @Param        token query string false "Token filter"
 // @Param        address query string false "Receive address filter"
@@ -339,7 +353,10 @@ func parseOrderFilter(ctx echo.Context) data.OrderListFilter {
 // @Failure      400 {object} response.ApiResponse
 // @Router       /admin/api/v1/orders/list-with-sub [get]
 func (c *BaseAdminController) ListOrdersWithSub(ctx echo.Context) error {
-	f := parseOrderFilter(ctx)
+	f, err := parseOrderFilter(ctx)
+	if err != nil {
+		return c.FailJson(ctx, err)
+	}
 	// Only parent orders at the top level; sub-orders appear nested inside sub_orders.
 	f.ParentOnly = true
 	rows, total, err := data.ListOrders(f)
